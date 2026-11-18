@@ -133,7 +133,7 @@ UID_MAX 60000 range". That is expected. Nothing needs restarting.
 
 ## 6. Download and start HALO Local
 
-For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt dev71 image and commands](https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev71). To build from source, continue below.
+For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt dev72 image and commands](https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev72). To build from source, continue below.
 
 ```sh
 git clone https://github.com/tvanbave/halo-local-dev.git halo-local

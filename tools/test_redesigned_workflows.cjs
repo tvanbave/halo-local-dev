@@ -53,6 +53,38 @@ function fixture() {
     catch(e){results.push({name,passed:false,error:e.message});await page.screenshot({path:path.join(evidence,name+'-failure.png'),fullPage:true});}
     finally{await context.close();}
   }
+  await scenario('bluetooth-startup-retry-and-disconnection',async(p,s)=>{
+    const status=s.snapshot.status;
+    const update=()=>p.evaluate(snapshot=>applySnapshot(snapshot),clone(s.snapshot));
+    Object.assign(status,{mesh_ready:false,bluetooth_starting:true,last_error:'bluetooth_connection_failed',pending_transactions:1});
+    await update();
+    const connecting=p.getByText('Connecting to the lights over Bluetooth…',{exact:true});
+    const warning=p.getByText('Bluetooth is disconnected',{exact:true});
+    await connecting.waitFor();
+    assert(await p.getByText('1 unfinished operation needs review',{exact:true}).isVisible());
+    assert.equal(await warning.count(),0);
+    assert.equal(await p.getByText('The bridge reported a problem',{exact:true}).count(),0);
+    assert.equal(await p.getByText('bluetooth_connection_failed',{exact:true}).count(),0);
+    await p.getByRole('button',{name:'Settings',exact:true}).first().click();
+    const bluetoothStatus=p.locator('dt').filter({hasText:/^Bluetooth$/}).locator('+ dd');
+    await bluetoothStatus.getByText('Connecting',{exact:true}).waitFor();
+    await p.evaluate(()=>go('home'));
+    status.bluetooth_starting=false;
+    await update();
+    await warning.waitFor();
+    assert.equal(await connecting.count(),0);
+    assert.equal(await warning.count(),1);
+    Object.assign(status,{mesh_ready:true,last_error:null});
+    await update();
+    await warning.waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>S.ble),4);
+    status.mesh_ready=false;
+    await update();
+    await warning.waitFor();
+    status.last_error='another_problem';
+    await update();
+    await p.getByText('another_problem',{exact:true}).waitFor();
+  });
   await scenario('capabilities-recover-without-reloading-and-follow-restart',async(p,s)=>{
     const caps=await p.evaluate(()=>S.caps);
     let available=false, requests=0;

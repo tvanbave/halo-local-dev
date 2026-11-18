@@ -575,8 +575,8 @@ function attentionItems() {
   const st = S.status || {};
   if (st.pending_transactions) items.push({t:`${st.pending_transactions} unfinished operation${st.pending_transactions === 1 ? ' needs' : 's need'} review`, s:'Review them in Operations. Nothing is retried automatically.', a:'Review operations', f:"go('operations')"});
   if (st.publication_pending) items.push({t:`${st.publication_pending} removed device${st.publication_pending === 1 ? ' needs' : 's need'} Home Assistant cleanup`, s:'Removal is confirmed. Review the remaining publication cleanup in Operations.', a:'Review cleanup', f:"go('operations')"});
-  if (st.last_error) items.push({t:'The bridge reported a problem', s:String(st.last_error), a:'Settings', f:"go('settings')"});
-  if (st.mesh_ready === false) items.push({t:'The bridge isn\'t connected to the mesh', s:'Light control and pairing wait until it reconnects.', a:'Settings', f:"go('settings')"});
+  if (st.last_error && st.last_error !== 'bluetooth_connection_failed') items.push({t:'The bridge reported a problem', s:String(st.last_error), a:'Settings', f:"go('settings')"});
+  if (st.mesh_ready === false && !st.bluetooth_starting) items.push({t:'Bluetooth is disconnected', s:'Check that a nearby HALO light has power and Bluetooth is enabled on the Pi.', a:'Settings', f:"go('settings')"});
   const dl = dupNames(ls);
   if (dl.length) items.push({t:`${dl.length} lights share a name with another light`, s:'Flash each one to see which is which, then give it a name.', a:'Name lights', f:'openNamer()'});
   const dc = dupNames(controllers());
@@ -585,9 +585,9 @@ function attentionItems() {
   duplicateGroups().forEach(([a, b]) => items.push({t:`"${a.name}" and "${b.name}" control the same ${a.members.length} lights`, s:'One of them is probably left over from an earlier setup.', a:'View', f:`openDrawer('group',${a.group_id})`}));
   lightingGroups().filter(g => !g.members.length).forEach(g => items.push({t:`"${g.name}" has no lights`, s:feat('group_edit') ? 'Add lights to it or delete it.' : 'Group editing isn\'t available on this bridge yet.', a:'View', f:`openDrawer('group',${g.group_id})`}));
   const unk = ls.filter(d => !known(d) && !gettingStatus(d)).length, sr = st.startup_read;
-  if (unk && sr && (sr.state === 'waiting' || sr.state === 'running'))
+  if (unk && st.mesh_ready !== false && sr && (sr.state === 'waiting' || sr.state === 'running'))
     items.push({t:'Checking lights after a restart', s:sr.state === 'running' ? `${sr.answered + sr.skipped} of ${sr.lights} checked so far.` : 'Starts when the bridge reaches the mesh.', a:'Devices', f:"go('devices')"});
-  else if (unk && feat('read_states')) items.push({t:`${unk} light${unk === 1 ? ' hasn\'t' : 's haven\'t'} reported a state`, s:'They may be switched off at the wall or out of range.', a:'Read states', f:'readStates()'});
+  else if (unk && st.mesh_ready !== false && feat('read_states')) items.push({t:`${unk} light${unk === 1 ? ' hasn\'t' : 's haven\'t'} reported a state`, s:'They may be switched off at the wall or out of range.', a:'Read states', f:'readStates()'});
   return items;
 }
 
@@ -600,6 +600,7 @@ function viewHome() {
   return `<div class="mobile-health">${healthLine()}</div>
   <div class="view-head"><div><h2>Home</h2><div class="sub">${powerCounts(ls)} · ${cs.length} controller${cs.length === 1 ? '' : 's'} · ${rs.length} room${rs.length === 1 ? '' : 's'}</div></div>
     <div class="actions">${feat('read_states') ? (stateSweep ? `<button class="btn" onclick="stopStateSweep()" ${stateSweep.stopped ? 'disabled' : ''}>${stateSweep.stopped ? 'Stopping read…' : 'Stop reading'}</button>` : '<button class="btn" onclick="readStates()">Read light states</button>') : ''}${feat('pair_lights') ? `<button class="btn primary" onclick="go('add')">${I.plus}Add devices</button>` : ''}</div></div>
+  ${S.status?.bluetooth_starting ? `<div class="callout info" role="status">${I.info}<div>Connecting to the lights over Bluetooth…</div></div>` : ''}
   ${waiting ? `<div class="callout info" role="status">${I.info}<div><b>Getting status for ${waiting} new light${waiting === 1 ? '' : 's'}…</b><p>New lights can take a moment to report their brightness.</p></div></div>` : ''}
   ${att.length ? `<section class="panel attention" aria-labelledby="attH"><h3 id="attH"><span class="badge warn">${att.length}</span>Needs attention</h3><ul>
     ${att.map(a => `<li><div class="t"><b>${esc(a.t)}</b><span>${esc(a.s)}</span></div><button class="btn sm" onclick="${a.f}">${a.a}</button></li>`).join('')}</ul></section>` : ''}
@@ -2696,8 +2697,9 @@ function applySnapshot(d) {
     renderSoon();
   }
   S.health = {mqtt_enabled: !!st.mqtt_enabled, mqtt_connected: !!st.mqtt_ready};
-  const ble = st.mesh_ready ? 4 : 5;
-  if (S.synced && ble !== S.ble) log('system', st.mesh_ready ? 'Mesh connected' : 'Mesh disconnected');
+  const ble = st.mesh_ready ? 4 : st.bluetooth_starting ? 2 : 5;
+  if (S.synced && ble !== S.ble && (ble === 4 || (S.ble === 4 && ble === 5)))
+    log('system', st.mesh_ready ? 'Mesh connected' : 'Mesh disconnected');
   S.ble = ble; S.rx = st.receive_count || 0;
   const t = S.caps.types || {}, ctrls = t.controllers || {}, names = t.lights || {}, color = t.color_temp || [93, 134, 137, 162];
   const groupsOf = {};
@@ -2743,7 +2745,7 @@ function applySnapshot(d) {
   S.synced = true;
   // The stream repeats the whole snapshot every second. Re-render only when something shown changed,
   // so open menus, focus and clicks are not interrupted.
-  const sig = JSON.stringify([S.devices, S.groups, S.roomMap, st.pairing, st.mesh_ready, st.pending_transactions, st.publication_pending, S.view === 'settings' ? st.command_timings : null, st.last_error, st.mqtt_enabled, st.mqtt_ready, st.startup_read, S.groupWorkflow, S.controllerViews, S.sceneWorkflow, sceneEpoch, st.jobs, st.keypad_saves, st.keypad_progress, st.anyplace_progress, st.claim_progress, S.view === 'add' && S.wiz?.step === 1 ? wizRows().map(rowSeenState) : null]);
+  const sig = JSON.stringify([S.devices, S.groups, S.roomMap, st.pairing, st.mesh_ready, st.bluetooth_starting, st.pending_transactions, st.publication_pending, S.view === 'settings' ? st.command_timings : null, st.last_error, st.mqtt_enabled, st.mqtt_ready, st.startup_read, S.groupWorkflow, S.controllerViews, S.sceneWorkflow, sceneEpoch, st.jobs, st.keypad_saves, st.keypad_progress, st.anyplace_progress, st.claim_progress, S.view === 'add' && S.wiz?.step === 1 ? wizRows().map(rowSeenState) : null]);
   if (sig !== lastSig) { lastSig = sig; renderSoon(); }
 }
 let lastSig = '', lastCapabilityInstance = null, waitingSnapshot = null;

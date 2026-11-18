@@ -18,6 +18,7 @@ from .protocol import decrypt_mcp, encrypt_mcp, model_command, plan_light_comman
 GROUP_COMMAND_SETTLE_MS = 150
 TARGETED_FEEDBACK_GAP = 0.15
 FEEDBACK_RECHECK_MS = 600
+BLUETOOTH_STARTUP_GRACE_MS = 30_000
 
 
 class _BackgroundReadInterrupted(RuntimeError):
@@ -41,6 +42,7 @@ class Runtime:
         self.claim_isolated = ({j['id'] for j in store.journals(pending=True)}
             if getattr(transport, 'ready', True) is False and not (client and client.is_connected) else set())
         self.mesh_ready = False
+        self._bluetooth_startup_deadline = None
         self.mqtt_ready = False
         self.mqtt_enabled = False
         self.last_error = None
@@ -214,6 +216,8 @@ class Runtime:
 
     def status(self):
         return {"mesh_ready": self.mesh_ready, "mqtt_ready": self.mqtt_ready,
+                "bluetooth_starting": (self._bluetooth_startup_deadline is not None
+                                       and self.clock() < self._bluetooth_startup_deadline),
                 "mqtt_enabled": self.mqtt_enabled,
                 "commissioning_only": getattr(self, "commissioning_only", False),
                 "preview_only": getattr(self, "preview_only", False),
@@ -1274,10 +1278,12 @@ class Runtime:
 
     async def bluetooth_loop(self):
         delay = 1
+        self._bluetooth_startup_deadline = self.clock() + BLUETOOTH_STARTUP_GRACE_MS
         while True:
             try:
                 await self.transport.connect()
                 self.mesh_ready = True
+                self._bluetooth_startup_deadline = None
                 self.last_error = None
                 self.session()
                 self.emit(self.discovery())

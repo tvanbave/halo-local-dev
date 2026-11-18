@@ -1,7 +1,7 @@
 {
   "export_format": 1,
-  "prepared_on": "2026-11-17",
-  "source_base_commit": "feef67c1bb115c9c35e6d6a494183a9c55122f7f",
+  "prepared_on": "2026-11-18",
+  "source_base_commit": "3160da7f3a102c974d99eb2874e369b9d6f5b84d",
   "upstream": [
     "https://github.com/oyvindkinsey/recsrmesh-cpp",
     "https://github.com/oyvindkinsey/avionmesh-cpp",

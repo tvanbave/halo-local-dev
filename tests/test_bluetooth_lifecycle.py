@@ -1,13 +1,53 @@
 """Synthetic bounded notification/disconnect lifecycle; never opens Bluetooth."""
 import asyncio
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from avionmesh_pi.bluez import BlueZTransport, LOW
-from test_service import FakeClient, FakeScanner
+from avionmesh_pi.runtime import Runtime, BLUETOOTH_STARTUP_GRACE_MS
+from support import synthetic_store
+from test_service import FakeClient, FakeScanner, FakeTransport, KEY
 
 
 class BluetoothLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_connection_retry_has_a_bounded_startup_window(self):
+        for elapsed in (10_000, BLUETOOTH_STARTUP_GRACE_MS):
+            with self.subTest(elapsed=elapsed), tempfile.TemporaryDirectory() as directory:
+                store = synthetic_store(directory, KEY)
+                now = 500_000
+                transport = FakeTransport()
+                transport.ready = False
+                transport.queue = asyncio.Queue()
+                runtime = Runtime(store, KEY, transport, clock=lambda: now)
+                transitions = asyncio.Queue()
+                runtime.session_observers.append(lambda: transitions.put_nowait(runtime.mesh_ready))
+
+                async def connect():
+                    if not runtime.last_error:
+                        raise OSError('Adapter starting')
+                    transport.ready = True
+
+                transport.connect = connect
+                task = asyncio.create_task(runtime.bluetooth_loop())
+                try:
+                    self.assertFalse(await asyncio.wait_for(transitions.get(), 3))
+                    now += elapsed
+                    status = runtime.status()
+                    self.assertEqual(status['last_error'], 'bluetooth_connection_failed')
+                    self.assertFalse(status['mesh_ready'])
+                    self.assertEqual(status['bluetooth_starting'], elapsed < BLUETOOTH_STARTUP_GRACE_MS)
+                    self.assertTrue(await asyncio.wait_for(transitions.get(), 3))
+                    self.assertIsNone(runtime.status()['last_error'])
+                    self.assertFalse(runtime.status()['bluetooth_starting'])
+                    transport.ready = False
+                    self.assertFalse(await asyncio.wait_for(transitions.get(), 3))
+                    self.assertFalse(runtime.status()['bluetooth_starting'])
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    store.close()
+
     async def test_notification_timeout_disconnects_without_ready_or_retry(self):
         clients = []
         class Client(FakeClient):
