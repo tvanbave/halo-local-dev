@@ -285,7 +285,7 @@
     "tools/test_scene_live_updates.cjs": "5ead05d04193ce7e09fc63b4ca10cad4aca449c785529101e795efc6d4ecb6b3",
     "tools/test_scene_scrolling.cjs": "d0d55a70fe4323b3de87f98446633c2be71a4e316365680ebe4d507fc120fa3f",
     "tools/test_scenes_browser.cjs": "3994b7173a7f2206d4efd794cbe5b843df8f0cc2996ac086a0dc9fc1b9a1196d",
-    "tools/test_settings_browser.cjs": "bd9fb70ae91b67bf7e4b2a6bf8eb89e4886968a71967a0b5e04f058c271f557d"
+    "tools/test_settings_browser.cjs": "270d48f5ae9f3d5a239e313a72dc6b4c7f75f3b04e63ef7e46921fd53ec3450d"
   },
   "source_base_commit": "feef67c1bb115c9c35e6d6a494183a9c55122f7f"
 }

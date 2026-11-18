@@ -34,8 +34,15 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
    return send({error:'unexpected_request'},404);
   });
   try{await p.goto('http://synthetic.invalid');await p.waitForFunction(()=>S.synced,null,{timeout:5000});await p.getByRole('button',{name:'Settings',exact:true}).click();assert(await p.locator('#mqttHost').isHidden());assert(await p.locator('#cloudEmail').isHidden());
-  const ops=await p.getByRole('button',{name:'Open operations'}).boundingBox();
-  assert(ops.y+ops.height < (await p.locator('#nav').boundingBox()).y || !mobile, 'Operations must fit above phone navigation');
+  const operations=p.getByRole('button',{name:'Open operations'});
+  await operations.waitFor({state:'visible'});
+  if (mobile) {
+    await p.waitForFunction(()=>{
+      const button=Array.from(document.querySelectorAll('#main button')).find(el=>el.textContent.trim()==='Open operations');
+      const rect=button?.getBoundingClientRect(),nav=document.querySelector('#nav')?.getBoundingClientRect();
+      return rect?.height>0 && nav?.height>0 && rect.bottom<nav.top;
+    });
+  }
   await p.locator('[data-settings-panel=mqtt] summary').click();
   await p.locator('#mqttHost').waitFor();await p.waitForFunction(()=>document.querySelector('#mqttFields')?.disabled===false);await test(p,s);results.push({name,passed:true});}
   catch(error){results.push({name,passed:false,error:error.message});await p.screenshot({path:path.join(evidence,name+'-failure.png'),fullPage:true});}
