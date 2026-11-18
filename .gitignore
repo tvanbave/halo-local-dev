@@ -1,0 +1,32 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.env*
+private/
+mesh_db.json
+*.key
+# Operational data and local credentials are never source fixtures.
+secrets/
+state/
+backups/
+captures/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db
+*.pem
+*.p12
+*.pfx
+*.pcap
+*.pcapng
+*.tar
+
+# Local tooling and generated publication output.
+.DS_Store
+node_modules/
+playwright-report/
+test-results/

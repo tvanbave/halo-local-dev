@@ -1,0 +1,24 @@
+# Preparation only. Do not launch before separate hardware coordination.
+services:
+  bridge:
+    profiles: [live]
+    build: .
+    image: avionmesh-pi:development
+    user: "${AVION_UID:-65532}:${AVION_GID:-65532}"
+    command: [serve, /config/service.json, --allow-live]
+    read_only: true
+    mem_limit: 512m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
+    ports:
+      - "127.0.0.1:8088:8088"
+    volumes:
+      - ./private/service.json:/config/service.json:ro
+      - ./private/secrets:/secrets:ro
+      - ./private/state:/state
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro
+    # No automatic restart/deployment policy until lifecycle acceptance.

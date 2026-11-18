@@ -1,0 +1,84 @@
+# Optional standalone stack for a dedicated Linux/Pi host, NOT an override.
+# Stop/mask host bluetooth.service first; see docs/SETUP.md. No host state import.
+name: halo-local
+services:
+  bluetooth:
+    build:
+      context: .
+      target: bluetooth
+    image: halo-local-bluetooth:local
+    pull_policy: build
+    command: [run, --allow-adapter-control]
+    network_mode: host
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    read_only: true
+    mem_limit: 256m
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid
+      - /run:size=4m,mode=0755,noexec,nosuid
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/halo-bluetooth/bus
+      HALO_ADAPTER: ${HALO_ADAPTER:-hci0}
+    volumes:
+      - halo-bluetooth-bus:/run/halo-bluetooth
+      - halo-bluetooth-state:/var/lib/bluetooth
+      # Read-only host bus access is exclusively for NameHasOwner conflict checks.
+      # Mount its directory so a host D-Bus restart cannot leave a stale bind socket.
+      - type: bind
+        source: /run/dbus
+        target: /host-dbus
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, python, -m, avionmesh_pi.bluetooth_stack, healthcheck]
+      interval: 10s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+  bridge:
+    build: .
+    image: halo-local:local
+    pull_policy: build
+    command: [start, --data-directory, /data, --allow-live]
+    depends_on:
+      bluetooth:
+        condition: service_healthy
+        restart: true
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    mem_limit: 512m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/halo-bluetooth/bus
+      HALO_HOST: ${HALO_HOST:-}
+      HALO_PORT: ${HALO_PORT:-18089}
+      HALO_REMOVAL: ${HALO_REMOVAL:-}
+      HALO_BROWSER_LOGIN: ${HALO_BROWSER_LOGIN:-}
+      HALO_ADAPTER: ${HALO_ADAPTER:-hci0}
+    volumes:
+      - halo-data:/data
+      - halo-bluetooth-bus:/run/halo-bluetooth:ro
+    healthcheck:
+      test: [CMD, python, -m, avionmesh_pi, healthcheck]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+volumes:
+  halo-data:
+    name: halo-local-data
+  halo-bluetooth-bus:
+    name: halo-local-bluetooth-bus
+  halo-bluetooth-state:
+    name: halo-local-bluetooth-state

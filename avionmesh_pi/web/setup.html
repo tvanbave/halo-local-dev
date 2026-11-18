@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Set up HALO Local</title><link rel="stylesheet" href="/setup.css"></head>
+<body><main><h1>Welcome to HALO Local</h1>
+<p>How would you like to set up this Pi?</p>
+<div class="setup-choices" role="group" aria-label="Setup options">
+<button type="button" data-setup-choice="fresh" aria-controls="freshPanel" aria-expanded="false">Start a new network</button>
+<button type="button" data-setup-choice="cloud" aria-controls="cloudPanel" aria-expanded="false">Import existing lights</button>
+<button type="button" data-setup-choice="restore" aria-controls="setupBackupMount" aria-expanded="false">Restore a backup</button>
+</div>
+<div id="setupBackupMount" hidden></div>
+<section id="cloudPanel" aria-labelledby="cloudTitle" hidden><h2 id="cloudTitle">Import from HALO Home / Avi-on</h2>
+<p>Already set up your lights in the app? Import their network key, names and groups to control them locally without re-pairing.</p>
+<form id="loginForm"><label for="email">Account email</label><input id="email" name="email" type="email" autocomplete="username" maxlength="320" required>
+<label for="password">Account password</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="4096" required>
+<p class="hint">Your account password is used for this import and is not saved.</p>
+<button type="submit" id="login">Sign in and find locations</button></form>
+<div id="locationStep" hidden><label for="location">HALO Home / Avi-on location</label><select id="location"></select>
+<button type="button" id="preview">Preview this location</button></div>
+<div id="review" hidden><h3 id="reviewTitle">Review import</h3><p id="summary"></p>
+<details open><summary>Devices</summary><ul id="deviceList"></ul></details>
+<details><summary>Groups</summary><ul id="groupList"></ul></details>
+<p class="hint">Imports names and existing memberships. It does not reprogram the lights. Scenes, schedules and keypad assignments are not imported or changed. Add selected devices and groups to Home Assistant after connecting MQTT.</p>
+<p class="hint">Use this Pi as the bridge for this network. Stop the ESP bridge before using local control. The HALO app can still manage the network.</p>
+<label class="check"><input id="importConfirm" type="checkbox">This is the existing setup I want this Pi to control.</label>
+<button type="button" id="import" disabled>Import and enable local control</button></div>
+<button type="button" id="cancel" class="secondary" hidden>Cancel import</button>
+</section>
+<section id="freshPanel" aria-labelledby="freshTitle" hidden><h2 id="freshTitle">Start a new network</h2>
+<p>For devices ready to pair with a new local mesh. No cloud account is needed.</p>
+<label class="check"><input id="confirm" type="checkbox">I want a new mesh and will pair devices that are ready to join it.</label>
+<button id="create" disabled>Create a new mesh</button></section>
+<p id="status" role="status" aria-live="polite"></p>
+
+<p class="hint">Home Assistant is optional. Connect your MQTT broker in Settings after setup.</p>
+</main><script src="/backup.js"></script><script src="/setup.js"></script></body></html>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>HALO Local · Raspberry Pi</title>
+<link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+<div class="app">
+  <nav class="nav" id="nav" aria-label="Bridge sections">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><div><b>HALO Local</b><span>Raspberry Pi bridge</span></div></div>
+    <div id="navItems"></div>
+    <div class="spacer"></div>
+    <button class="health" id="healthBox" onclick="go('settings')" aria-label="Bridge status"></button>
+  </nav>
+  <main class="view" id="main"><p class="empty">Connecting to the bridge…</p></main>
+  <div id="busyRoot"></div>
+  <div id="drawerRoot"></div>
+</div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+<noscript>This page needs JavaScript turned on.</noscript>
+<script src="/settings.js"></script>
+<script src="/backup.js"></script>
+<script src="/ops.js"></script>
+<script src="/ui.js"></script>
+</body>
+</html>

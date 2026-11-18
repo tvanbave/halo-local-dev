@@ -1,0 +1,71 @@
+name: Offline checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build installed package image
+        run: docker build -t halo-local:ci .
+      - name: Test without network or hardware
+        run: >-
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges
+          --workdir /tmp --env AVIONMESH_ISOLATED_TESTS=1 --entrypoint python
+          halo-local:ci -I -W error -m unittest discover -s /app/tests -v
+      - name: Verify installed wheel
+        run: >-
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges
+          --workdir /tmp --entrypoint python halo-local:ci -I /app/tests/verify_installed.py
+      - name: Replay synthetic fixture
+        run: docker run --rm --network none halo-local:ci replay /app/fixtures/session.jsonl
+      - name: Check dependencies
+        run: docker run --rm --network none --entrypoint python halo-local:ci -I -m pip check
+  bluetooth:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Validate both standalone Compose files
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.bluetooth.yaml config --quiet
+      - name: Build optional Bluetooth image
+        run: docker build --target bluetooth -t halo-local-bluetooth:ci .
+      - name: Test private D-Bus without hardware or network
+        # SETUID permits synthetic clients at the real bridge UID and a denied UID.
+        # Deliberately no NET_ADMIN/NET_RAW, host network or hardware/bus mounts.
+        run: >-
+          docker run --rm --network none --cap-drop ALL --cap-add SETUID
+          --security-opt no-new-privileges --workdir /tmp
+          --env HALO_TEST_PRIVATE_DBUS=1 --entrypoint python
+          halo-local-bluetooth:ci -I -W error -m unittest discover
+          -s /app/tests -p test_bluetooth_stack.py -v
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx playwright install --with-deps ${{ matrix.engine }}
+      - run: npm run test:unit
+      - run: npm run test:browser
+        env:
+          BROWSER_ENGINE: ${{ matrix.engine }}
+          EVIDENCE_DIR: ${{ runner.temp }}/halo-browser

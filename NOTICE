@@ -1,0 +1,45 @@
+avionmesh-pi: isolated Raspberry Pi / Linux bridge development project, 2026-11-06.
+Distributed under LGPL-3.0-only; see LICENSE and accompanying COPYING.GPLv3.
+
+Protocol logic is adapted into Python from oyvindkinsey/recsrmesh-cpp
+(MCP receive crypto, header layout, MTL constants), oyvindkinsey/avionmesh-cpp
+(command encoding), and local extensions to oyvindkinsey/esphome-avionmesh
+(controller event decoding). Original projects are LGPL-3.0. Copyright in the
+original contributions remains with their respective authors and contributors.
+The checked source files contain no additional author copyright notice.
+
+Inspected reference hashes and repository revisions are recorded in
+docs/PROVENANCE.json; private deployment records remain outside this snapshot. Local changes are not represented as upstream releases.
+Python receive pipeline, validation, replay CLI, fixtures, container setup and
+tests are new work. No browser assets, private inventories or captures copied.
+Cryptography is provided by the separately installed cryptography package;
+its own notices and licenses remain in its installed distribution.
+
+Version 0.2 adds a Python MASP/ECDH port from the local recsrmesh ACK-validation
+reference and guarded table-editor behavior from the staged ESP source 586ebb8.
+The recsrmesh-cpp maintainer's licensing commit 726c2b28420eb336366a2ec1036efc1dd2a6bc60
+(2026-10-18) explicitly declares LGPL-3.0-or-later and adds the LGPLv3 LICENSE.
+Its older README's GPL label is treated as stale based on that commit and file.
+The publication license review records the evidence. Upstream license grants,
+including later-version options, are retained; this project's existing
+LGPL-3.0-only declaration is unchanged. GitHub publication is separate from
+hardware qualification.
+
+Version 0.3 also derives lifecycle, keypad onboarding/checkpoint recovery,
+Accessory enrollment, scoped dimmer assignment, identity hints and cloud metadata
+handling from the reviewed staged ESP source archive 586ebb8. See
+docs/PROVENANCE.json and the retained private development provenance.
+The platform adapters and synthetic tests remain separate from operational state.
+
+Version 0.4 capture semantics reference staged mesh_capture.h; sequence safety review references public recsrmesh csrmesh.cpp/mcp_crypto.cpp. Original notices and exact hashes are retained in docs/PROVENANCE.json.
+
+Version 0.4.4 adds an original, narrow aiomqtt socket-lifetime adapter after
+inspecting aiomqtt 2.5.1 client.py. It uses private callback/future hooks and
+requires that pinned version. aiomqtt is separately installed under its BSD
+license; its full notices remain in the installed distribution. No global event
+loop errors are suppressed. Source reference/hash are recorded in provenance.
+
+November 10 development membership reads and verification adapt the local ESP
+commissioning candidate local_lighting_hub.cpp (LGPL v3). Exact frozen archive
+and source hashes are retained in docs/PROVENANCE.json. Python journaling,
+restricted batch orchestration and synthetic tests are separate work.

@@ -1,0 +1,14 @@
+{
+  "name": "halo-local-browser-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Synthetic browser regression checks for HALO Local",
+  "license": "LGPL-3.0-only",
+  "scripts": {
+    "test:unit": "node tools/run_ui_tests.cjs",
+    "test:browser": "node tools/run_browser_checks.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.58.2"
+  }
+}

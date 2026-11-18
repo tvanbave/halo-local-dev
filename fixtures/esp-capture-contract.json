@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "matched": true,
+  "records": [
+    [
+      1,
+      7,
+      0,
+      0,
+      40001,
+      32768,
+      115,
+      4
+    ],
+    [
+      2,
+      9,
+      1,
+      0,
+      32768,
+      40001,
+      115,
+      4
+    ]
+  ],
+  "excluded": [
+    "foreign_source",
+    "post_stop"
+  ],
+  "differences": [
+    "Pi capacity256 versus ESP64",
+    "Pi owner and session boundaries are additionally enforced",
+    "Pi allows only documented MCP nouns; no MASP or arbitrary payload capture"
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "export_format": 1,
+  "prepared_on": "2026-11-17",
+  "source_base_commit": "feef67c1bb115c9c35e6d6a494183a9c55122f7f",
+  "upstream": [
+    "https://github.com/oyvindkinsey/recsrmesh-cpp",
+    "https://github.com/oyvindkinsey/avionmesh-cpp",
+    "https://github.com/oyvindkinsey/esphome-avionmesh"
+  ],
+  "repositories": {
+    "contributions/esphome-avionmesh": "417e8676909ac98ff9e50e66a24f0d96674f51a0",
+    "contributions/revisions/dimmers": "508c38e9401a3b37709d1ee3988e0e0d3e2658bc",
+    "contributions/revisions/recsrmesh-observer": "8d4baaf7fe1da058bf309646693696654259a19b",
+    "contributions/revisions/avionmesh-observer-candidate": "0cf84e0b946ace134a401503db3b8ec62e801c2c"
+  },
+  "inspected_reference_files": [
+    {
+      "path_relative_to_parent": "port/UPSTREAM.md",
+      "sha256": "af89b76f36dc95fae86becc2b600fa8cf0b7d2bdc6d388e2dfbab0dc66a385de"
+    },
+    {
+      "path_relative_to_parent": "port/requirements.txt",
+      "sha256": "fac2790194098464c96e70c6be5275546027a5941d02566ef5708a130acdb2f5"
+    },
+    {
+      "path_relative_to_parent": "port/model.py",
+      "sha256": "6d831c644154e72a34fe7b242b1186dec7f34e7382e224a8a39b3efa034ea595"
+    },
+    {
+      "path_relative_to_parent": "port/bridge.py",
+      "sha256": "fc1e792ce281c9317f1c9b80a0c343888fbc4e0f852ab697295713edb98b6440"
+    },
+    {
+      "path_relative_to_parent": "esp32/components/avionmesh/controller_events.h",
+      "sha256": "25cda8290acd149ca349735bf7559fad4570f4c13de95f2cc603c9fba931d986"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/dimmers/components/avionmesh/controller_events.h",
+      "sha256": "75f99a0a32bec850cb21d3332c39b1ea0ec3e1bfaaacefb36a899578873cb152"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/dimmers/components/avionmesh/local_dimmer.h",
+      "sha256": "660a8c40f78f9a1191c321f3c9ee36fc449d804c53cbb336a2ac3bfbec75285b"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/recsrmesh-observer/src/mcp_crypto.cpp",
+      "sha256": "17e1f642568fa3810a4f8c1eed3cc3e6667dbcbda5b466c01c11bcbf4ab006c1"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/recsrmesh-observer/src/crypto.cpp",
+      "sha256": "c0dcf939661d2501fdd55a29219f2f298f5d9812782279abb079d94a280c9f80"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/recsrmesh-observer/src/csrmesh.cpp",
+      "sha256": "1a637eb80de102a149faf5c15f661914e1b17f63a8331f9bab58fbb1d39389ef"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/recsrmesh-observer/src/mcp.cpp",
+      "sha256": "b2319cb803e60dfaeb13212ebdc0ce764a5a27003c357030596b1549d6a61351"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/recsrmesh-observer/src/mtl.cpp",
+      "sha256": "756f60a41c43250413d8cc33f826f116b3653ca388c7eb62749771484c69171a"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/recsrmesh-observer/include/recsrmesh/types.h",
+      "sha256": "de65fba111f7fd3a26d057987af22ef64419f0df0595ea2b3150ce2447ce7134"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/recsrmesh-observer/LICENSE",
+      "sha256": "1c9fc1827baaa656e6458fd7203ac2d015b690c6528cfe5b558da3d2b367c6ae"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/avionmesh-observer-candidate/src/commands.cpp",
+      "sha256": "3b4afe1db132c9b7d7354fc5279851ce8468dad552ac82bb09d401b0689d9b81"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/avionmesh-observer-candidate/src/parse.cpp",
+      "sha256": "75b6f7acc30f36689873bb447f2d555e61676b623c52df61a506484dc4648712"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/avionmesh-observer-candidate/include/avionmesh/types.h",
+      "sha256": "96340533c71435fbea347ef8c0e09ef62a10b152d2314d01c9e34b4b0b61780d"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/avionmesh-observer-candidate/LICENSE",
+      "sha256": "1c9fc1827baaa656e6458fd7203ac2d015b690c6528cfe5b558da3d2b367c6ae"
+    },
+    {
+      "path_relative_to_parent": "notes/background-development-20261105.md",
+      "sha256": "d34937892ccb72f85010b23ca997a5ad9f6872ea1f15045982082cd1db4e85d3"
+    },
+    {
+      "path_relative_to_parent": "port/LICENSE.upstream",
+      "sha256": "9e966c80dc78a15b7ab4bda2cd479510f4401460e88713362e84653cfd223704"
+    },
+    {
+      "path_relative_to_parent": "port/COPYING.GPLv3",
+      "sha256": "3e50d658046a887e6e81d89ae22a1b36e4c2749d248ba381d9681a277126a283"
+    },
+    {
+      "path_relative_to_parent": "contributions/esphome-avionmesh/tools/avion_import.py",
+      "sha256": "6855573a33cc0bfac42becc0a4eeb90cfdc15d998e7e24b914e51e49dd1ae92a"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/dimmers/components/avionmesh/cloud_sync.cpp",
+      "sha256": "cd6c6afa72ac0670a40aebc0d924100ecdae0639dc1e80e56f84dafd25908491"
+    },
+    {
+      "path_relative_to_parent": "contributions/revisions/dimmers/components/avionmesh/web.js",
+      "sha256": "ee4862c39a5b8fb50094cef24cf84520238db4543cb4d5d71d81c15372511a0a"
+    }
+  ],
+  "private_development_provenance_sha256": "bd1b4299f1263e494c4045a9de9f45a6c0e57f1d7158c5e34ca0f94e232ca76f",
+  "notes": [
+    "Python/Linux port with local ESP extensions; not an upstream release.",
+    "Original 104+ commit history and home-specific deployment evidence remain local.",
+    "The complete LGPL/GPL texts and upstream attribution are retained.",
+    "See LICENSE-REVIEW.md for the maintainer commit resolving the upstream README discrepancy."
+  ],
+  "license_review_resolution": {
+    "reviewed_on": "2026-11-13",
+    "scope": "recsrmesh-cpp README license-label discrepancy only",
+    "conclusion": "README GPL line treated as stale based on explicit maintainer LGPL grant and LICENSE; existing project LGPL-3.0-only declaration unchanged",
+    "licensing_commit": "726c2b28420eb336366a2ec1036efc1dd2a6bc60",
+    "licensing_commit_url": "https://github.com/oyvindkinsey/recsrmesh-cpp/commit/726c2b28420eb336366a2ec1036efc1dd2a6bc60",
+    "licensing_commit_date": "2026-10-18",
+    "upstream_license_declared_in_commit": "LGPL-3.0-or-later",
+    "license_blob": "970cf6ae16ec1ed0f7d9413fc9bd093ff9c423c8",
+    "readme_commit": "e92b3e7b05575f183091c51716413c1149f50f2e",
+    "readme_merge_commit": "b27df19b55a19baa1b596297b86a66686790c478",
+    "inspected_revision": "006e8428fe262829a80ac3d309d60be9b6bc8815",
+    "readme_blob": "51b6cc7d4eb6591aa56779e279700cf1ccc9b3bb",
+    "maintainer_contacted": false,
+    "upstream_modified": false
+  }
+}

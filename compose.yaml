@@ -1,0 +1,43 @@
+# New installations on Linux/Raspberry Pi. Existing installations keep their
+# current configuration and state; do not use this to take over another mesh.
+name: halo-local
+services:
+  bridge:
+    build: .
+    image: halo-local:local
+    pull_policy: build
+    command: [start, --data-directory, /data, --allow-live]
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    mem_limit: 512m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
+      HALO_HOST: ${HALO_HOST:-}
+      HALO_PORT: ${HALO_PORT:-18089}
+      HALO_REMOVAL: ${HALO_REMOVAL:-}
+      HALO_BROWSER_LOGIN: ${HALO_BROWSER_LOGIN:-}
+      HALO_ADAPTER: ${HALO_ADAPTER:-hci0}
+    volumes:
+      - halo-data:/data
+      - type: bind
+        source: /run/dbus/system_bus_socket
+        target: /run/dbus/system_bus_socket
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, python, -m, avionmesh_pi, healthcheck]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+volumes:
+  halo-data:
+    # Stable across checkout/folder names. Never delete this to fix startup.
+    name: halo-local-data

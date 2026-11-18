@@ -1,0 +1,9 @@
+{
+  "devices": [
+    {"device_id": 40001, "product_id": 127, "name": "Synthetic keypad", "exposed": false},
+    {"device_id": 40002, "product_id": 134, "name": "Synthetic bulb", "exposed": false}
+  ],
+  "groups": [
+    {"group_id": 291, "name": "Synthetic group", "members": [40002], "exposed": false, "protected": false}
+  ]
+}

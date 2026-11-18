@@ -1,0 +1,21 @@
+{
+  "relay_address": null,
+  "adapter": "hci0",
+  "node": "pi_claim_lab",
+  "state_directory": "/state",
+  "mesh_passphrase_file": "/secrets/mesh_passphrase",
+  "api_token_file": "/secrets/api_token",
+  "http_host": "127.0.0.1",
+  "http_port": 18089,
+  "commissioning_only": true,
+  "mqtt": null,
+  "capabilities": {
+    "ordinary_claim": false,
+    "inventory_complete": false,
+    "bulk_claim": false,
+    "claim_reset_recovery": false,
+    "group_membership": false,
+    "group_membership_readback": false
+  },
+  "first_device_bootstrap": true
+}

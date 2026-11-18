@@ -1,0 +1,30 @@
+{
+  "relay_address": "00:11:22:33:44:55",
+  "adapter": "hci0",
+  "node": "pi_development",
+  "state_directory": "/state",
+  "mesh_passphrase_file": "/secrets/mesh_passphrase",
+  "api_token_file": "/secrets/api_token",
+  "http_host": "0.0.0.0",
+  "http_port": 8088,
+  "mqtt": {
+    "host": "broker.example.invalid",
+    "port": 8883,
+    "tls": true,
+    "username": "dedicated-bridge-user",
+    "password_file": "/secrets/mqtt_password"
+  },
+  "capabilities": {
+    "ordinary_claim": false,
+    "wired_editor": false,
+    "battery_editor": false,
+    "inventory_complete": false,
+    "removal": false,
+    "wired_onboarding": false,
+    "battery_onboarding": false,
+    "accessory_onboarding": false,
+    "group_membership": false,
+    "dimmer_editor": false,
+    "cloud_sync": false
+  }
+}
