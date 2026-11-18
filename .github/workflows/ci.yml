@@ -51,6 +51,10 @@ jobs:
           -s /app/tests -p test_bluetooth_stack.py -v
   browser:
     runs-on: ubuntu-24.04
+    # Match the Playwright version in package-lock.json to the bundled browsers.
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble@sha256:6446946a1d9fd62d9ae501312a2d76a43ee688542b21622056a372959b65d63d
+      options: --shm-size=1g
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -63,7 +67,6 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npx playwright install --with-deps ${{ matrix.engine }}
       - run: npm run test:unit
       - run: npm run test:browser
         env:
