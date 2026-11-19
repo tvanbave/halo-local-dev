@@ -133,7 +133,7 @@ UID_MAX 60000 range". That is expected. Nothing needs restarting.
 
 ## 6. Download and start HALO Local
 
-For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt dev77 image and commands](https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev77). To build from source, continue below.
+For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt dev78 image and commands](https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev78). To build from source, continue below.
 
 ```sh
 git clone https://github.com/tvanbave/halo-local-dev.git halo-local
@@ -237,12 +237,7 @@ removal controls on an older installation, follow
 
 ### Back up and restore
 
-For the optional trusted-LAN workflow with passwordless downloads and restores, see [Trusted-LAN backups](BACKUP.md#optional-trusted-lan-backups-dev77-and-later). You can still select **Protect with a password** when downloading.
-
-Open **Settings → Backup & restore**. On a passwordless bridge running dev71 or
-later, enter this Pi’s owner password when prompted. For a password-protected file, enter and confirm a separate
-backup password of 12–256 characters and choose **Download backup**. Keep the
-`.halobackup` file off the Pi and save any password separately.
+Fresh dev78 installations support full backups and restores on your LAN without editing `.env` or entering a bridge owner password. In **Settings → Backup & restore**, choose **Download backup** and keep the file off the Pi. Select **Protect with a password** if you want an encrypted copy. Save that password separately. See [Trusted-LAN backups](BACKUP.md#trusted-lan-backups) for access settings and upgrade behaviour.
 
 To replace a Pi without re-pairing lights, choose **Restore a backup**
 on the replacement's first-run page, review the file and confirm that the old

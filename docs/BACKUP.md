@@ -19,32 +19,23 @@ lights, and it does not send old group, scene or button programming requests.
 | MQTT settings and credentials, bridge identity, sharing choices and discovery identifiers | Home Assistant automations, dashboards and its own registry backup |
 | Database records, radio counter, allocated/retired addresses and all operation receipts, including unfinished operations | Changes made after the backup was created |
 
-By default the archive is encrypted and checked before it is offered for download. Keep its
-password separately: it is required to open the backup and cannot be recovered
-from the file. The backup is local; no HALO cloud account is needed to create or
-restore it.
+The bridge checks each archive before download. If you select **Protect with a password**, save that password separately. You will need it to open the encrypted file. Backup and restore run locally.
 
 The format supports a database up to **8 MiB** and portable settings up to
 **128 KiB**. This limit keeps backup processing bounded on smaller Pis. Larger
 installations are refused rather than exported incompletely.
 
-## Optional trusted-LAN backups (dev77 and later)
+## Trusted-LAN backups
 
-To allow anyone who can reach a passwordless bridge on your LAN to download and restore a full backup, add this line to the installation directory’s `.env` file:
+On a fresh installation of dev78 or later, choose **Restore a backup** on the first screen. Select your file, review the inventory and confirm the restore. No `.env` change or bridge owner password is required. The page asks for a file password only when you select an encrypted backup.
 
-```dotenv
-HALO_TRUSTED_LAN_BACKUPS=true
-```
+In **Settings → Backup & restore**, **Download backup** saves a file that opens without a password. Select **Protect with a password** for an encrypted copy. Anyone who can reach a passwordless bridge on your LAN can download or restore a full backup. Anyone holding an unencrypted file can read its mesh and MQTT credentials.
 
-Run `docker compose up -d` using your usual Compose file. Custom containers take the same environment variable. The default is false. This setting belongs to the Pi and stays outside the backup. Enable it separately on a fresh installation if you want the same access there. An existing browser login still applies.
-
-With this option on, **Download backup** saves a single file you can restore without a password. Anyone holding the file can read its credentials. Select **Protect with a password** for an encrypted copy. Restore detects the file format and asks for the original password only for an encrypted file. An owner can also restore an unencrypted file on a dev77 or newer installation with trusted-LAN backups switched off.
+Upgrades keep the installation’s previous access settings. To require owner authorization and encrypted downloads, set `HALO_TRUSTED_LAN_BACKUPS=false` in the installation’s `.env` and run `docker compose up -d` using your usual Compose file. To enable trusted-LAN backups on an older installation running dev77 or later, set it to `true` and recreate the container. A configured browser login still applies. The destination Pi controls access after a restore.
 
 ## Confirm backup access
 
-With the default backup settings on a passwordless bridge, daily controls open as usual. Downloading a full backup,
-reviewing an uploaded backup and restoring it require the **destination Pi’s
-bridge owner password**. Get it in a terminal on that Pi, from the directory
+If trusted-LAN backups are switched off and the bridge opens without a browser login, enter **this Pi’s bridge owner password** when the page asks. Get it in a terminal on that Pi, from the directory
 where you start HALO Local:
 
 ```sh

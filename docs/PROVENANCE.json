@@ -1,7 +1,7 @@
 {
   "export_format": 1,
   "prepared_on": "2026-11-19",
-  "source_base_commit": "9047f71daf27a545596b3b8432206b4eb680069a",
+  "source_base_commit": "cdda6d8dcd2098c96db2794322d5c53935b0750d",
   "upstream": [
     "https://github.com/oyvindkinsey/recsrmesh-cpp",
     "https://github.com/oyvindkinsey/avionmesh-cpp",
@@ -111,7 +111,7 @@
       "sha256": "ee4862c39a5b8fb50094cef24cf84520238db4543cb4d5d71d81c15372511a0a"
     }
   ],
-  "private_development_provenance_sha256": "3365c1b29c6218533f3f39941c82f400622df5daf3cc28d397354a380fb28911",
+  "private_development_provenance_sha256": "c186eaad7c536bdd57308d2ced054127f17a9d1077d1f5c3414cc7574f16f27f",
   "notes": [
     "Python/Linux port with local ESP extensions; not an upstream release.",
     "Original 104+ commit history and home-specific deployment evidence remain local.",

@@ -66,6 +66,16 @@ class InstallationTests(unittest.TestCase):
             self.assertEqual(store.get('sequence'), seq)
             self.assertEqual(len(store.inventory()['devices']), 1)
         finally: store.close()
+    def test_explicit_backup_opt_out_survives_setup_and_restart(self):
+        from avionmesh_pi.backup_manager import BackupManager
+        with patch.dict('os.environ', {'HALO_TRUSTED_LAN_BACKUPS': 'false'}):
+            config = self.initialize()
+            self.assertFalse(config['trusted_lan_backups'])
+        restarted = q.existing_config(self.root, HOST, PORT, 'hci0')
+        for value, expected in (('', False), ('true', True), ('false', False), ('typo', False)):
+            with self.subTest(value=value), patch.dict('os.environ', {'HALO_TRUSTED_LAN_BACKUPS': value}):
+                self.assertEqual(BackupManager(config=restarted).trusted_lan_backups, expected)
+
     def test_new_install_enables_reviewed_removal_without_enabling_reset_recovery(self):
         config = self.initialize()
         self.assertTrue(config['capabilities']['removal'])

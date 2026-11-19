@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="Development build 0.5.0.dev77" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev77-orange">
+  <img alt="Development build 0.5.0.dev78" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev78-orange">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
   <img alt="Local control, no cloud login for daily use" src="https://img.shields.io/badge/control-local%2C%20no%20cloud%20login-2c68a8">
   <img alt="Licence LGPL-3.0-only" src="https://img.shields.io/badge/licence-LGPL--3.0--only-blue">
@@ -24,7 +24,7 @@
 
 <p align="center">
   <a href="docs/INSTALL.md"><b>Install on a Raspberry Pi</b></a> ·
-  <a href="https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev77">Download dev77 for 64-bit Raspberry Pi OS</a> ·
+  <a href="https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev78">Download dev78 for 64-bit Raspberry Pi OS</a> ·
   <a href="#what-works-today">What works today</a> ·
   <a href="#hardware-status">Hardware status</a> ·
   <a href="docs/SETUP.md">Setup reference</a> ·
@@ -33,7 +33,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Development build: 0.5.0.dev77.** This build is for experienced testers, not
+> **Development build: 0.5.0.dev78.** This build is for experienced testers, not
 > a one-click replacement for the app. Full hardware parity and unattended recovery
 > are still being tested; read [Hardware status](#hardware-status) before you rely on it.
 > HALO Local is not an official Cooper Lighting or Avi-on product, and it is not
@@ -184,7 +184,7 @@ on real hardware.
 | Home Assistant | Configure MQTT in **Settings** and share selected devices and groups. |
 | Existing networks | On a new installation, import an existing HALO Home / Avi-on network key, devices and groups. Later syncs review compatible inventory updates on that same network. |
 | Removal | Remove lights and controllers with dependency review and verification; cloud-imported lights also require physical confirmation. Remove empty groups, and remove scene presets or forget their bridge records. [Removal options](docs/SETUP.md#removing-lights-controllers-groups-and-scenes). |
-| Backup & restore | Download a full backup with password protection by default. Enable trusted-LAN backups on the Pi to make encryption optional. Review and restore on this bridge or an empty replacement Pi. Preserves paired identities and MQTT discovery identifiers; physical acceptance is pending. [Backup guide](docs/BACKUP.md). |
+| Backup & restore | Fresh installations support LAN backups and restores with optional file encryption. Review and restore on this bridge or an empty replacement Pi. Preserves paired identities and MQTT discovery identifiers; physical acceptance is pending. [Backup guide](docs/BACKUP.md). |
 | Safety | Review incomplete operations explicitly; uncertain writes are not retried by refreshes or reconnects. |
 | Phone and desktop | Use the desktop/mobile page for commissioning, controller settings and recovery. |
 

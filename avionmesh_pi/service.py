@@ -114,7 +114,7 @@ def load_config(path):
 
 def validate_config(config):
     required = {"relay_address", "node", "state_directory", "mesh_passphrase_file", "api_token_file", "mqtt"}
-    optional = {"adapter", "http_host", "http_port", "capabilities", "commissioning_only", "allow_lan_http", "first_device_bootstrap", "automatic_bootstrap", "automatic_relay", "trusted_lan_no_auth", "browser_login"}
+    optional = {"adapter", "http_host", "http_port", "capabilities", "commissioning_only", "allow_lan_http", "first_device_bootstrap", "automatic_bootstrap", "automatic_relay", "trusted_lan_no_auth", "browser_login", "trusted_lan_backups"}
     if not isinstance(config, dict) or not required <= set(config) or set(config) - required - optional:
         raise ValueError("Invalid service configuration")
     def text(value, maximum=4096):
@@ -123,6 +123,8 @@ def validate_config(config):
         return text(value) and Path(value).is_absolute()
     def port(value):
         return type(value) is int and 1<=value<=65535
+    if 'trusted_lan_backups' in config and type(config['trusted_lan_backups']) is not bool:
+        raise ValueError('trusted_lan_backups must be boolean')
     bootstrap = bootstrap_mode(config)
     automatic = automatic_bootstrap_mode(config)
     automatic_relay = automatic_relay_mode(config)

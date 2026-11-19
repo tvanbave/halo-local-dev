@@ -117,9 +117,7 @@ an explicit choice to create a new mesh or import an existing HALO Home setup.
 Browser login is **off by default for new installations**. Anyone who can reach
 the bridge on your LAN can manage it and control its devices. Keep it on a trusted
 network and do not forward the HTTP port to the internet. Host and browser-origin
-checks remain enabled, including during initial setup. Full backup downloads and
-restores require this Pi’s owner password by default. To make that prompt optional on your LAN, see [Trusted-LAN backups](BACKUP.md#optional-trusted-lan-backups-dev77-and-later). Retrieve it with the command below.
-[Backup and restore](BACKUP.md#confirm-backup-access).
+checks remain enabled, including during initial setup. Fresh dev78 installations also allow full backup downloads and restores with optional file encryption. Upgrades preserve the previous backup access policy. See [Trusted-LAN backups](BACKUP.md#trusted-lan-backups) to change it.
 
 To require a login, add this to the repository's local `.env` file, preserving
 any other settings:

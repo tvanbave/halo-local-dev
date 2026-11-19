@@ -17,6 +17,7 @@ import sys
 import urllib.request
 from aiohttp import web
 
+from .backup_manager import trusted_lan_backup_access
 from .browser_auth import authorized, challenge, basic_header
 from .migration import admit, canonical_digest
 from .protocol import derive_mcp_key
@@ -232,6 +233,7 @@ def initialize(directory, host, port, adapter, *, imported=None, browser_login=F
               'http_host': host, 'http_port': port, 'adapter': adapter, 'commissioning_only': True, 'mqtt': None,
               'first_device_bootstrap': True, 'automatic_bootstrap': True,
               'browser_login': browser_login, 'trusted_lan_no_auth': not browser_login,
+              'trusted_lan_backups': trusted_lan_backup_access(default=True),
               'allow_lan_http': True, 'capabilities': CAPABILITIES.copy()}
     if imported is not None:
         config.update(first_device_bootstrap=False, automatic_bootstrap=False, automatic_relay=True)
@@ -257,7 +259,7 @@ def restore_installation(directory, host, port, adapter, token, review, *, brows
     config = make_installation(stage, final, database, review['decoded']['settings'],
         dict(api_token=token, service=dict(http_host=host, http_port=port, adapter=adapter,
             browser_login=browser_login, trusted_lan_no_auth=not browser_login, allow_lan_http=True,
-            commissioning_only=True, mqtt=None)))
+            trusted_lan_backups=trusted_lan_backup_access(default=True), commissioning_only=True, mqtt=None)))
     # Managed installations keep their destination browser credential location.
     config['api_token_file'] = str(directory / 'ui-password')
     replacement = stage / 'service.restore.json'

@@ -167,6 +167,14 @@ def make_installation(stage, final, database, settings, destination):
     return config
 
 
+def trusted_lan_backup_access(*, default):
+    """An explicit host setting overrides the destination installation's policy."""
+    override = os.environ.get('HALO_TRUSTED_LAN_BACKUPS', '')
+    if override == '':
+        return default
+    return override.strip().lower() == 'true'
+
+
 def destination_service(config):
     # Preserve the actual access policy, including the defaults for token-only
     # services. A restored installation reads its broker from mqtt-settings.json.
@@ -175,6 +183,7 @@ def destination_service(config):
                 adapter=config.get('adapter', 'hci0'), allow_lan_http=config.get('allow_lan_http', False),
                 browser_login=config.get('browser_login', False),
                 trusted_lan_no_auth=config.get('trusted_lan_no_auth', False),
+                trusted_lan_backups=config.get('trusted_lan_backups', False),
                 commissioning_only=commissioning, mqtt=None if commissioning else {'host': config['mqtt']['host']})
 
 
@@ -293,7 +302,9 @@ class BackupManager:
         self.runtime, self.config, self.restart = runtime, config, restart
         self.install, self.destination, self.clock = install, destination, clock
         # A host-only option. Backup content and API requests cannot enable it.
-        self.trusted_lan_backups = os.environ.get('HALO_TRUSTED_LAN_BACKUPS', '').strip().lower() == 'true'
+        fresh_setup = install is not None and runtime is None
+        saved_access = (config or {}).get('trusted_lan_backups') is True
+        self.trusted_lan_backups = trusted_lan_backup_access(default=fresh_setup or saved_access)
         self.lock = asyncio.Lock(); self.review = None; self.expiry = None
 
     def clear(self):

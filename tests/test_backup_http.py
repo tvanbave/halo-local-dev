@@ -75,7 +75,12 @@ class BackupHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.manager.review)
         self.assertEqual(self.restarts,[]);self.assertEqual(self.fixture.transport.frames,[])
 
-    async def test_browser_login_and_trusted_lan_backup_guards(self):
+    async def test_legacy_browser_login_and_trusted_lan_backup_guards(self):
+        # A pre-dev78 installation has no saved backup-access setting.
+        legacy_config = dict(self.fixture.config)
+        legacy_config.pop('trusted_lan_backups')
+        self.fixture.runtime.backup_manager = b.BackupManager(self.fixture.runtime, legacy_config, self.restarts.append)
+        self.assertFalse(self.fixture.runtime.backup_manager.trusted_lan_backups)
         for login in (False,True):
             kwargs={'browser_login':True} if login else {'trusted_lan_no_auth':True}
             client=await self.open_client(server.create_app(self.fixture.runtime,self.token,allowed_host=HOST+':'+str(PORT),**kwargs))
@@ -103,7 +108,7 @@ class BackupHttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_trusted_lan_optional_password_and_replacement_restore(self):
         headers = {'Host': f'{HOST}:{PORT}', 'Origin': f'http://{HOST}:{PORT}'}
-        self.manager.trusted_lan_backups = True
+        self.assertTrue(self.manager.trusted_lan_backups)
         client = await self.open_client(server.create_app(self.fixture.runtime, self.token,
             allowed_host=headers['Host'], trusted_lan_no_auth=True))
         status = await (await client.get('/api/backup/status', headers=headers)).json()
@@ -141,7 +146,7 @@ class BackupHttpTests(unittest.IsolatedAsyncioTestCase):
 
         destination = self.root / 'trusted-replacement'
         ready = asyncio.Event()
-        with q.installation_lock(destination), patch.dict('os.environ', {'HALO_TRUSTED_LAN_BACKUPS': 'true'}):
+        with q.installation_lock(destination):
             token = q.password(destination)
             setup = await self.open_client(q.setup_app(destination, HOST, PORT, 'hci0', token, ready))
             status = await (await setup.get('/api/backup/status', headers=headers)).json()
@@ -155,6 +160,8 @@ class BackupHttpTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((await response.json())['accepted'])
             self.assertTrue(ready.is_set())
             restored = q.existing_config(destination, HOST, PORT, 'hci0')
+            self.assertTrue(restored['trusted_lan_backups'])
+            self.assertTrue(b.BackupManager(self.fixture.runtime, restored).trusted_lan_backups)
             self.assertEqual(restored['node'], self.fixture.config['node'])
             self.assertEqual(private_text(restored['api_token_file']), token)
             self.assertEqual(private_text(restored['mesh_passphrase_file']),
@@ -265,7 +272,7 @@ class BackupHttpTests(unittest.IsolatedAsyncioTestCase):
         destination=self.root/'bounded';ready=asyncio.Event()
         with q.installation_lock(destination):
             token=q.password(destination)
-            with patch.object(b,'MAX_HTTP_BYTES',65536):
+            with patch.object(b,'MAX_HTTP_BYTES',65536), patch.dict('os.environ', {'HALO_TRUSTED_LAN_BACKUPS':'false'}):
                 client=await self.open_client(q.setup_app(destination,HOST,PORT,'hci0',token,ready))
             headers={'Host':HOST+':'+str(PORT),'Content-Type':'application/json'}
             status = await client.get('/api/backup/status', headers=headers)
