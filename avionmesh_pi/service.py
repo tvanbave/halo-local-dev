@@ -323,9 +323,10 @@ async def _serve_once(config, restart, restart_event):
         refresh = runtime.capabilities.get('observation_refresh',
             runtime.capabilities.get('startup_light_read') is not False)
         if refresh:
-            tasks.append(asyncio.create_task(runtime.observation_refresh()))
+            tasks.append(asyncio.create_task(runtime.observation_refresh(
+                broadcast_startup=runtime.capabilities.get('startup_light_read') is not False)))
         elif runtime.capabilities.get('startup_light_read') is not False:
-            tasks.append(asyncio.create_task(runtime.startup_read()))
+            tasks.append(asyncio.create_task(runtime.startup_read(broadcast_startup=True)))
         # Unlike gather(), wait() does not cancel/join children before entering
         # our finally when the service receives SIGTERM. Cleanup admission and
         # its budgets therefore start immediately, even during MQTT teardown.

@@ -4,7 +4,7 @@ import json
 from .migration import canonical_digest
 from .protocol import integer
 from .membership import MEMBERSHIP_SCHEMAS
-from .identity import (wired_reset_profile, bootstrap_reset_profile, pre_key_claim_profile, rl4_public_key_claim_profile, a19_public_key_claim_profile,
+from .identity import (wired_reset_profile, bootstrap_reset_profile, pre_key_claim_profile, rl4_public_key_claim_profile, a19_pre_address_claim_profile,
                        rl4_pre_network_key_claim_profile)
 
 
@@ -81,9 +81,9 @@ def recovery_advice(journal):
         return {'actions':['cancel_unattempted'],'reason':'no_dispatch_attempt_recorded'}
     if pre_key_claim_profile(journal):
         return {'actions':['retire_pre_key_claim'],'reason':'Only initial association request submitted; verify fresh exact unpaired UUID, retain receipt/address, never auto-retry'}
-    if rl4_public_key_claim_profile(journal) or a19_public_key_claim_profile(journal):
+    if rl4_public_key_claim_profile(journal) or a19_pre_address_claim_profile(journal):
         return {'actions':['retire_pre_key_claim'],
-                'reason':'Only public-key exchange submitted, before address or network key; require isolated worker and fresh exact unpaired evidence, retain receipt/address, never auto-retry',
+                'reason':'Pairing stopped before address or network key submission; require isolated worker and fresh exact unpaired evidence, retain receipt/address, never auto-retry',
                 'retry_allowed':False, 'physical_reset_verified':False}
     if rl4_pre_network_key_claim_profile(journal):
         return {'actions':['retire_pre_network_key_claim'],

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="Development build 0.5.0.dev72" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev72-orange">
+  <img alt="Development build 0.5.0.dev76" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev76-orange">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
   <img alt="Local control, no cloud login for daily use" src="https://img.shields.io/badge/control-local%2C%20no%20cloud%20login-2c68a8">
   <img alt="Licence LGPL-3.0-only" src="https://img.shields.io/badge/licence-LGPL--3.0--only-blue">
@@ -24,7 +24,7 @@
 
 <p align="center">
   <a href="docs/INSTALL.md"><b>Install on a Raspberry Pi</b></a> ·
-  <a href="https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev72">Download dev72 for 64-bit Raspberry Pi OS</a> ·
+  <a href="https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev76">Download dev76 for 64-bit Raspberry Pi OS</a> ·
   <a href="#what-works-today">What works today</a> ·
   <a href="#hardware-status">Hardware status</a> ·
   <a href="docs/SETUP.md">Setup reference</a> ·
@@ -33,7 +33,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Development build: 0.5.0.dev72.** This build is for experienced testers, not
+> **Development build: 0.5.0.dev76.** This build is for experienced testers, not
 > a one-click replacement for the app. Full hardware parity and unattended recovery
 > are still being tested; read [Hardware status](#hardware-status) before you rely on it.
 > HALO Local is not an official Cooper Lighting or Avi-on product, and it is not
@@ -75,8 +75,12 @@
   During a Bluetooth reconnect, the page keeps previous readings marked **Last known**
   until each light replies again. These readings do not confirm a command or make a
   light available to Home Assistant; a bridge restart starts with no cached readings.
-  Newly added lights show **Getting status…** for up to two minutes while waiting
-  for their first power or brightness report, before showing a missing-status warning.
+  At startup the bridge requests brightness and white temperature across the mesh.
+  Lights appear as they answer. It then checks individual lights for any missing readings. With automatic
+  checks enabled, it shows **Waiting for next check…** after a missed reply.
+  Three unanswered power checks on the same connection flag that light for attention.
+  A power or brightness report clears the warning. The Bluetooth indicator tracks
+  the Pi’s connection to its mesh relay.
 
 ## A closer look
 

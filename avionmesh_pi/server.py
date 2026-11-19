@@ -474,6 +474,7 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
         data = dict(status=status_snapshot(), inventory=runtime.store.inventory(),
                     device_states=runtime.device_states(), last_known_device_states=runtime.last_known_device_states(),
                     initial_light_status=runtime.initial_light_status(),
+                    power_read_status=runtime.power_read_status(),
                     bindings=runtime.core.controllers.bindings,
                     controllers=controller_workflows(runtime, read_only=read_only))
         data['ha_readiness'] = assess_ha(data)

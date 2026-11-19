@@ -159,3 +159,27 @@ def a19_public_key_claim_profile(journal):
     requires isolated ownership, verified prior retirement and a fresh exact UUID.
     """
     return _light_claim_receipt(journal, {'public_key': range(2, 8)}, product=134)
+
+
+def a19_pre_address_claim_profile(journal):
+    """Recognize a first-request timeout or an existing public-key-only receipt."""
+    if a19_public_key_claim_profile(journal):
+        return True
+    if not _light_claim_receipt(journal, {'association': (1,)}, product=134):
+        return False
+    detail = journal['detail']
+    timing = detail.get('association_timing')
+    observed = detail.get('failure_observation')
+    if not isinstance(timing, dict) or not isinstance(observed, dict):
+        return False
+    steps = timing.get('steps')
+    if not isinstance(steps, list) or len(steps) != 1 or not isinstance(steps[0], dict):
+        return False
+    step = steps[0]
+    return (detail.get('failure_code') == 'association_response_timeout'
+            and step.get('state') == observed.get('state') == 'association'
+            and type(step.get('chunk')) is int and step['chunk'] == 0
+            and type(observed.get('expected_chunk')) is int and observed['expected_chunk'] == 0
+            and type(step.get('write_finished_ms')) is int and step['write_finished_ms'] >= 0
+            and observed.get('same_session') is True and observed.get('transport_ready') is True
+            and observed.get('queue_overflow') is False)

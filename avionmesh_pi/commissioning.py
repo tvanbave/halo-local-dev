@@ -5,7 +5,7 @@ import json
 import uuid
 
 from .identity import (advertised_identity, ping_token, wired_reset_profile,
-                       bootstrap_reset_profile, pre_key_claim_profile, rl4_public_key_claim_profile, a19_public_key_claim_profile,
+                       bootstrap_reset_profile, pre_key_claim_profile, rl4_public_key_claim_profile, a19_pre_address_claim_profile,
                        rl4_pre_network_key_claim_profile)
 from .association import (AssociationError, Association, MASP_RESPONSE_OPCODES, discovery_request,
                           open_envelope, uuid_hash)
@@ -635,7 +635,7 @@ class Commissioning:
             if complete and original['detail'].get('product_id') in (81, 126):
                 return outcome('owner_wake_required', requires_review=True)
             if not complete and not (pre_key_claim_profile(original) or rl4_public_key_claim_profile(original)
-                                     or a19_public_key_claim_profile(original) or rl4_pre_network_key_claim_profile(original)):
+                                     or a19_pre_address_claim_profile(original) or rl4_pre_network_key_claim_profile(original)):
                 return outcome('unsafe_checkpoint', requires_review=True)
             waits = 0
             for _ in range(3 if complete else 1):
@@ -720,10 +720,10 @@ class Commissioning:
     async def reconcile_owner_reset(self, identifier, owner_reset):
         return await self._reconcile_claim_retirement(identifier, owner_reset)
 
-    def _public_key_retirement_scope(self, journal, inventory):
+    def _light_retirement_scope(self, journal, inventory):
         """Recheck durable ownership/history; no new proof is inferred from a scan."""
         r = self.runtime
-        if (not (rl4_public_key_claim_profile(journal) or a19_public_key_claim_profile(journal)
+        if (not (rl4_public_key_claim_profile(journal) or a19_pre_address_claim_profile(journal)
                  or rl4_pre_network_key_claim_profile(journal))
                 or r.capabilities.get('ordinary_claim') is not True
                 or journal['id'] not in r.claim_isolated
@@ -744,7 +744,7 @@ class Commissioning:
             detail = other['detail']
             if detail.get('uuid') != identity and detail.get('uuid_hash') != fingerprint:
                 continue
-            if (a19_public_key_claim_profile(journal)
+            if (a19_pre_address_claim_profile(journal)
                     and self._verified_a19_removal(other, identity, fingerprint, receipts, inventory)):
                 continue
             if (detail.get('uuid') != identity or detail.get('uuid_hash') != fingerprint
@@ -763,7 +763,7 @@ class Commissioning:
                         or proof['target'] != other['target'] or not isinstance(original, dict)
                         or dict(original, status='retired') != other
                         or not (pre_key_claim_profile(original) or rl4_public_key_claim_profile(original)
-                                or a19_public_key_claim_profile(original) or rl4_pre_network_key_claim_profile(original))
+                                or a19_pre_address_claim_profile(original) or rl4_pre_network_key_claim_profile(original))
                         or p.get('uuid') != identity or p.get('uuid_hash') != fingerprint
                         or p.get('pre_key_only') is not True or p.get('owner_reset_declared') is not False
                         or p.get('reset_dispatched') is not False or p.get('association_retried') is not False
@@ -820,7 +820,7 @@ class Commissioning:
 
         No reset, disassociation or association command is sent here. Ordinary
         light reset claims remain excluded, except the retained direct first RL4.
-        An ordinary RL4 or A19 public-key-only attempt may retire without reset only
+        An ordinary RL4 or A19 pre-network-key attempt may retire without reset only
         under its stricter receipt/isolation/history/exact-observation profile.
         """
         r = self.runtime
@@ -847,17 +847,17 @@ class Commissioning:
         inventory_before = copy.deepcopy(r.store.inventory())
         pre_network_key = pre_key and rl4_pre_network_key_claim_profile(journal)
         # These explicit profiles prove the network key was never dispatched.
-        a19_public_key = pre_key and a19_public_key_claim_profile(journal)
-        public_key_only = pre_key and (rl4_public_key_claim_profile(journal) or a19_public_key or pre_network_key)
+        a19_pre_address = pre_key and a19_pre_address_claim_profile(journal)
+        light_retirement = pre_key and (rl4_public_key_claim_profile(journal) or a19_pre_address or pre_network_key)
         if pre_key:
-            if public_key_only:
-                if not self._public_key_retirement_scope(journal, inventory_before):
+            if light_retirement:
+                if not self._light_retirement_scope(journal, inventory_before):
                     raise ValueError('No-key light retirement requires isolated, exclusive, unchanged receipt evidence')
             elif not direct_reset or not pre_key_claim_profile(journal) or identifier not in r.claim_isolated:
                 raise ValueError('Only a proven first-RL4 or supported pre-key light attempt can retire without reset')
         identity = journal['detail'].get('uuid')
         fingerprint = uuid_hash(self._identity(identity))
-        if not direct_reset and not public_key_only and (not r.capabilities.get('claim_reset_recovery')
+        if not direct_reset and not light_retirement and (not r.capabilities.get('claim_reset_recovery')
                 or not wired_reset_profile(identity, journal['detail']['product_id'])):
             raise ValueError('Reset recovery is restricted to qualified wired or empty first-device bootstrap scope')
         if journal['detail'].get('uuid_hash') != fingerprint or journal['target'] in r.core.devices:
@@ -882,9 +882,9 @@ class Commissioning:
             with r.store.transaction():
                 r.store.require_tx_ready()
                 current = next(j for j in r.store.journals() if j['id'] == identifier)
-                if public_key_only and not self._public_key_retirement_scope(current, inventory_before):
+                if light_retirement and not self._light_retirement_scope(current, inventory_before):
                     raise ValueError('Public-key retirement evidence changed during observation')
-                if pre_key and not public_key_only and not pre_key_claim_profile(current):
+                if pre_key and not light_retirement and not pre_key_claim_profile(current):
                     raise ValueError('Pre-key receipt changed during observation')
                 if pre_key and identifier not in r.claim_isolated:
                     raise ValueError('Claim isolation changed during observation')
@@ -910,9 +910,12 @@ class Commissioning:
                                  dispatch_profile='rl4-pre-network-key-8-through-10',
                                  device_id_dispatched=journal['detail']['association_phase'] == 'device_id',
                                  network_key_dispatched=False, isolated_previous_worker=True)
-                elif public_key_only:
+                elif a19_pre_address and journal['detail']['association_phase'] == 'association':
+                    proof.update(dispatch_profile='a19-initial-association-1', device_id_dispatched=False,
+                                 network_key_dispatched=False, isolated_previous_worker=True)
+                elif light_retirement:
                     proof.update(recovery_schema='claim-public-key-retirement-v1',
-                                 dispatch_profile='a19-public-key-2-through-7' if a19_public_key else 'rl4-public-key-2-through-7',
+                                 dispatch_profile='a19-public-key-2-through-7' if a19_pre_address else 'rl4-public-key-2-through-7',
                                  device_id_dispatched=False, network_key_dispatched=False,
                                  isolated_previous_worker=True)
                 r.store.db.execute('INSERT INTO journals VALUES (?,?,?,?,?)',

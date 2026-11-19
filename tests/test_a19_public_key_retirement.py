@@ -9,7 +9,7 @@ import test_claim_development as base
 from test_association import Peer
 from avionmesh_pi.association import open_envelope, uuid_hash
 from avionmesh_pi.commissioning import Commissioning
-from avionmesh_pi.identity import a19_public_key_claim_profile
+from avionmesh_pi.identity import a19_public_key_claim_profile, a19_pre_address_claim_profile
 from avionmesh_pi.lifecycle import Lifecycle
 from avionmesh_pi.management import recovery_advice
 from avionmesh_pi.runtime import Runtime
@@ -76,13 +76,13 @@ class A19RetirementTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(target,self.runtime.core.devices)
         return old,proof
 
-    async def failed(self):
+    async def failed(self, *, first_request=False):
         self.transport.peers[FINGERPRINT]=Peer()
         await self.claims.discover()
         send=self.transport.send;wait_for=asyncio.wait_for
         async def lose_chunk(frame):
             p=open_envelope(frame)
-            if p[0]==4 and p[5]==3:
+            if (p[0] == 2 if first_request else p[0] == 4 and p[5] == 3):
                 self.transport.frames.append(frame)
                 self.transport.peers[FINGERPRINT].respond(frame)
                 return
@@ -93,9 +93,9 @@ class A19RetirementTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.TimeoutError):
                 await self.claims.claim(A19,'Retry A19',134,inventory_complete=True)
         item,=self.store.journals(pending=True)
-        self.assertEqual(item['detail']['association_phase'],'public_key')
-        self.assertEqual(item['detail']['submissions_attempted'],5)
-        self.assertEqual(item['detail']['submissions_accepted'],5)
+        self.assertEqual(item['detail']['association_phase'],'association' if first_request else 'public_key')
+        self.assertEqual(item['detail']['submissions_attempted'],1 if first_request else 5)
+        self.assertEqual(item['detail']['submissions_accepted'],1 if first_request else 5)
         self.assertIsNone(self.transport.peers[FINGERPRINT].target)
         self.assertFalse(self.transport.peers[FINGERPRINT].netkey)
         self.runtime.mesh_ready=self.transport.ready=True
@@ -121,6 +121,43 @@ class A19RetirementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(proof['detail']['dispatch_profile'],'a19-public-key-2-through-7')
         self.assertFalse(proof['detail']['network_key_dispatched'])
         self.assertFalse(proof['detail']['device_id_dispatched'])
+
+    async def test_first_request_timeout_needs_fresh_exact_identity_before_retirement(self):
+        item = await self.failed(first_request=True)
+        self.assertTrue(a19_pre_address_claim_profile(item))
+        self.assertEqual(recovery_advice(item)['actions'], ['retire_pre_key_claim'])
+        before = len(self.transport.frames)
+        inventory = self.store.inventory()
+        self.transport.ads = [OTHER]
+        missing = await self.claims.recover_safe_pending(item['id'])
+        self.assertEqual(missing['outcome'], 'unpaired_not_observed')
+        self.assertEqual(self.store.journals(pending=True), [item])
+        self.transport.ads = [A19]
+        result = await self.claims.reconcile_pre_key(item['id'])
+        self.assertTrue(result['pre_key_retired'])
+        self.assertEqual([open_envelope(f)[0] for f in self.transport.frames[before:]], [0, 0])
+        proof = next(j['detail'] for j in self.store.journals() if j['kind'] == 'claim_pre_key')
+        self.assertEqual(proof['dispatch_profile'], 'a19-initial-association-1')
+        self.assertFalse(proof['network_key_dispatched'])
+        self.assertFalse(proof['device_id_dispatched'])
+        self.assertFalse(proof['association_retried'])
+        self.assertIn(item['target'], self.store.get('retired_addresses'))
+        self.assertEqual(self.store.inventory(), inventory)
+
+    async def test_inconsistent_first_request_timeout_stays_pending(self):
+        item = await self.failed(first_request=True)
+        for field, value in (('association_timing', {}), ('failure_observation', None),
+                             ('failure_code', 'association_transport_write_failed'),
+                             ('submissions_attempted', 2), ('submissions_accepted', 0)):
+            with self.subTest(field=field):
+                modified = copy.deepcopy(item)
+                modified['detail'][field] = value
+                self.assertFalse(a19_pre_address_claim_profile(modified))
+                self.replace(modified)
+                await self.assert_blocked(item)
+        self.replace(item)
+        self.runtime.claim_isolated.clear()
+        await self.assert_blocked(item)
 
     async def test_exact_verified_previous_removal_allows_new_checkpoint(self):
         old,proof=await self.old_completed_and_removed();item=await self.failed()

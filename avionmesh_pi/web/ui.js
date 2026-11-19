@@ -32,7 +32,7 @@ const I = {
   flash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>',
 };
 
-const BLE_NAMES = ['Idle','Scanning','Connecting','Discovering','Ready','Disconnected'];
+const BLE_NAMES = ['Idle','Scanning','Connecting','Discovering','Ready','Disconnected','Retrying'];
 const TYPE_NAMES = {81:'Anyplace dimmer',90:'Lamp dimmer',91:'Accessory dimmer',93:'RL4 downlight',94:'Light adapter',97:'Smart dimmer',
   126:'Battery scene keypad',127:'Wired scene keypad',134:'A19 bulb',137:'Surface downlight',162:'Micro Edge',167:'Smart switch'};
 const CONTROLLER_SUPPORT = {
@@ -68,7 +68,10 @@ const gName = id => (grp(id) || {name:'Group ' + id}).name;
 const members = gid => (grp(gid)?.members || []).map(dev).filter(Boolean);
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, {numeric:true});
 const known = d => d.brightness !== undefined;
-const gettingStatus = d => !known(d) && Number.isFinite(d.initial_status_until) && Date.now() < d.initial_status_until;
+const gettingStatus = d => !known(d) && (d.power_read_status === 'waiting' || d.power_read_status === 'retry_pending' ||
+  (!['no_reply', 'unconfirmed'].includes(d.power_read_status) && Number.isFinite(d.initial_status_until) && Date.now() < d.initial_status_until));
+const missingPowerReply = d => !known(d) && !gettingStatus(d) &&
+  (d.power_read_status === 'no_reply' || d.power_read_status === undefined);
 const isOn = d => known(d) && d.brightness > 0;
 const canDim = d => d.kind === 'light' && d.has_dimming !== false && d.product_type !== 167;
 function powerCounts(devices) {
@@ -96,7 +99,8 @@ function ageText(id) {
 }
 function stateText(d) {
   if (S.pending[d.avion_id]) return 'Sent · waiting for reply';
-  return !known(d) ? (gettingStatus(d) ? 'Getting status…' : 'State unknown') : (d.power_last_known ? 'Last known: ' : '') + (isOn(d) ? (canDim(d) ? pct(d.brightness) + '%' : 'On') : 'Off') + ageText(d.avion_id);
+  if (!known(d) && d.power_read_status === 'retry_pending') return 'Waiting for next check…';
+  return !known(d) ? (gettingStatus(d) ? 'Getting status…' : d.power_read_status === 'no_reply' ? 'No power reading' : 'State unknown') : (d.power_last_known ? 'Last known: ' : '') + (isOn(d) ? (canDim(d) ? pct(d.brightness) + '%' : 'On') : 'Off') + ageText(d.avion_id);
 }
 function kelvinColor(k) {
   const stops = [[2700,[255,174,82]],[3000,[255,198,128]],[3500,[255,221,176]],[4000,[255,240,220]],[5000,[238,242,255]]];
@@ -576,7 +580,8 @@ function attentionItems() {
   if (st.pending_transactions) items.push({t:`${st.pending_transactions} unfinished operation${st.pending_transactions === 1 ? ' needs' : 's need'} review`, s:'Review them in Operations. Nothing is retried automatically.', a:'Review operations', f:"go('operations')"});
   if (st.publication_pending) items.push({t:`${st.publication_pending} removed device${st.publication_pending === 1 ? ' needs' : 's need'} Home Assistant cleanup`, s:'Removal is confirmed. Review the remaining publication cleanup in Operations.', a:'Review cleanup', f:"go('operations')"});
   if (st.last_error && st.last_error !== 'bluetooth_connection_failed') items.push({t:'The bridge reported a problem', s:String(st.last_error), a:'Settings', f:"go('settings')"});
-  if (st.mesh_ready === false && !st.bluetooth_starting) items.push({t:'Bluetooth is disconnected', s:'Check that a nearby HALO light has power and Bluetooth is enabled on the Pi.', a:'Settings', f:"go('settings')"});
+  if (st.mesh_ready === false && st.bluetooth_startup_retrying) items.push({t:"Bluetooth hasn't connected yet", s:'The bridge is retrying. Check that a nearby HALO light has power and Bluetooth is enabled on the Pi.', a:'Settings', f:"go('settings')"});
+  else if (st.mesh_ready === false && !st.bluetooth_starting) items.push({t:'Bluetooth is disconnected', s:'Check that a nearby HALO light has power and Bluetooth is enabled on the Pi.', a:'Settings', f:"go('settings')"});
   const dl = dupNames(ls);
   if (dl.length) items.push({t:`${dl.length} lights share a name with another light`, s:'Flash each one to see which is which, then give it a name.', a:'Name lights', f:'openNamer()'});
   const dc = dupNames(controllers());
@@ -584,10 +589,10 @@ function attentionItems() {
   if (feat('labels') && ls.length && !ls.some(roomOf)) items.push({t:'Lights aren\'t sorted into rooms yet', s:'Rooms organise this page. You can start from your groups.', a:'Sort into rooms', f:'openRoomSetup()'});
   duplicateGroups().forEach(([a, b]) => items.push({t:`"${a.name}" and "${b.name}" control the same ${a.members.length} lights`, s:'One of them is probably left over from an earlier setup.', a:'View', f:`openDrawer('group',${a.group_id})`}));
   lightingGroups().filter(g => !g.members.length).forEach(g => items.push({t:`"${g.name}" has no lights`, s:feat('group_edit') ? 'Add lights to it or delete it.' : 'Group editing isn\'t available on this bridge yet.', a:'View', f:`openDrawer('group',${g.group_id})`}));
-  const unk = ls.filter(d => !known(d) && !gettingStatus(d)).length, sr = st.startup_read;
-  if (unk && st.mesh_ready !== false && sr && (sr.state === 'waiting' || sr.state === 'running'))
+  const unk = ls.filter(d => missingPowerReply(d)).length, sr = st.startup_read;
+  if (unk && st.mesh_ready !== false && ls.every(d => d.power_read_status === undefined) && sr && (sr.state === 'waiting' || sr.state === 'running'))
     items.push({t:'Checking lights after a restart', s:sr.state === 'running' ? `${sr.answered + sr.skipped} of ${sr.lights} checked so far.` : 'Starts when the bridge reaches the mesh.', a:'Devices', f:"go('devices')"});
-  else if (unk && st.mesh_ready !== false && feat('read_states')) items.push({t:`${unk} light${unk === 1 ? ' hasn\'t' : 's haven\'t'} reported a state`, s:'They may be switched off at the wall or out of range.', a:'Read states', f:'readStates()'});
+  else if (unk && st.mesh_ready !== false && feat('read_states')) items.push({t:`${unk} light${unk === 1 ? ' hasn\'t' : 's haven\'t'} reported a state`, s:ls.some(d => d.power_read_status === 'no_reply') ? 'Three power checks received no reply from each affected light.' : 'Open Devices to see which readings are missing.', a:'View lights', f:"S.filter='att';S.q='';go('devices')"});
   return items;
 }
 
@@ -600,8 +605,8 @@ function viewHome() {
   return `<div class="mobile-health">${healthLine()}</div>
   <div class="view-head"><div><h2>Home</h2><div class="sub">${powerCounts(ls)} · ${cs.length} controller${cs.length === 1 ? '' : 's'} · ${rs.length} room${rs.length === 1 ? '' : 's'}</div></div>
     <div class="actions">${feat('read_states') ? (stateSweep ? `<button class="btn" onclick="stopStateSweep()" ${stateSweep.stopped ? 'disabled' : ''}>${stateSweep.stopped ? 'Stopping read…' : 'Stop reading'}</button>` : '<button class="btn" onclick="readStates()">Read light states</button>') : ''}${feat('pair_lights') ? `<button class="btn primary" onclick="go('add')">${I.plus}Add devices</button>` : ''}</div></div>
-  ${S.status?.bluetooth_starting ? `<div class="callout info" role="status">${I.info}<div>Connecting to the lights over Bluetooth…</div></div>` : ''}
-  ${waiting ? `<div class="callout info" role="status">${I.info}<div><b>Getting status for ${waiting} new light${waiting === 1 ? '' : 's'}…</b><p>New lights can take a moment to report their brightness.</p></div></div>` : ''}
+  ${S.status?.bluetooth_starting && !S.status.bluetooth_startup_retrying ? `<div class="callout info" role="status">${I.info}<div>Connecting to the lights over Bluetooth…</div></div>` : ''}
+  ${waiting ? `<div class="callout info" role="status">${I.info}<div><b>Getting status for ${waiting} light${waiting === 1 ? '' : 's'}…</b><p>Each light updates when it reports its state.</p></div></div>` : ''}
   ${att.length ? `<section class="panel attention" aria-labelledby="attH"><h3 id="attH"><span class="badge warn">${att.length}</span>Needs attention</h3><ul>
     ${att.map(a => `<li><div class="t"><b>${esc(a.t)}</b><span>${esc(a.s)}</span></div><button class="btn sm" onclick="${a.f}">${a.a}</button></li>`).join('')}</ul></section>` : ''}
   <section class="home-section" aria-labelledby="homeGroups"><div class="section-head"><h3 id="homeGroups">Groups <span class="badge">${gs.length}</span></h3><button class="link" onclick="go('groups')">Manage groups</button></div>
@@ -648,7 +653,7 @@ function ctrlTile(d, inRoomCard = false) {
 }
 
 function viewDevices(controllerOnly = false) {
-  const att = new Set([...dupNames(lights()), ...dupNames(controllers()), ...lights().filter(d => !known(d) && !gettingStatus(d))].map(d => d.avion_id));
+  const att = new Set([...dupNames(lights()), ...dupNames(controllers()), ...lights().filter(missingPowerReply)].map(d => d.avion_id));
   let rows = controllerOnly ? controllers() : S.devices.slice();
   const query = controllerOnly ? S.controllerQ : S.q;
   if (!controllerOnly && S.filter === 'lights') rows = rows.filter(d => d.kind !== 'controller');
@@ -725,7 +730,7 @@ function lightDrawer(d) {
       <input id="briR" type="range" min="0" max="100" value="${p}" oninput="$('#briV').textContent=this.value+'%'" onchange="setBrightness(${d.avion_id},this.value)">` : ''}
       ${d.has_color_temp ? kelvinControls(d.avion_id, d.color_temp) : ''}
       ${d.color_temp_last_known ? '<p class="hint">Colour temperature is the last known reading; waiting for an update.</p>' : ''}
-      ${!known(d) ? `<p class="hint">${gettingStatus(d) ? 'Getting the first status report. This can take a moment after adding a light.' : 'The light hasn\'t reported its state yet. Changing it will ask for a reply.'}</p>` : ''}</div>` : ''}
+      ${!known(d) ? `<p class="hint">${d.power_read_status === 'no_reply' ? 'Three power checks received no reply.' : d.power_read_status === 'retry_pending' ? 'The bridge will check this light again.' : gettingStatus(d) ? 'Waiting for the first power reading.' : 'The light hasn\'t reported its state yet. Changing it will ask for a reply.'}</p>` : ''}</div>` : ''}
     <div class="sec"><h4>Name and room</h4>${nameField(d)}${roomField(d)}</div>
     ${haSharingHtml('device', d)}
     <div class="sec"><h4>Groups</h4>${(d.groups || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${d.groups.map(g => `<button class="chip" onclick="openDrawer('group',${g})">${esc(gName(g))}</button>`).join('')}</div>` : '<p class="hint" style="margin:0">Not in any group.</p>'}
@@ -2697,7 +2702,7 @@ function applySnapshot(d) {
     renderSoon();
   }
   S.health = {mqtt_enabled: !!st.mqtt_enabled, mqtt_connected: !!st.mqtt_ready};
-  const ble = st.mesh_ready ? 4 : st.bluetooth_starting ? 2 : 5;
+  const ble = st.mesh_ready ? 4 : st.bluetooth_startup_retrying ? 6 : st.bluetooth_starting ? 2 : 5;
   if (S.synced && ble !== S.ble && (ble === 4 || (S.ble === 4 && ble === 5)))
     log('system', st.mesh_ready ? 'Mesh connected' : 'Mesh disconnected');
   S.ble = ble; S.rx = st.receive_count || 0;
@@ -2717,6 +2722,7 @@ function applySnapshot(d) {
     if (s.state && s.state.value === 'OFF') out.brightness = 0;
     else if (s.brightness) out.brightness = s.brightness.value;
     else if (s.state && s.state.value === 'ON') out.brightness = 255;
+    out.power_read_status = d.power_read_status ? d.power_read_status[x.device_id] || 'unchecked' : undefined;
     const firstStatus = d.initial_light_status?.[String(x.device_id)]?.remaining_ms;
     out.initial_status_until = Number.isFinite(firstStatus) && firstStatus > 0 ? Date.now() + Math.min(firstStatus, 120000) : null;
     out.power_last_known = !current.state && !current.brightness && !!(s.state || s.brightness);
@@ -2745,7 +2751,7 @@ function applySnapshot(d) {
   S.synced = true;
   // The stream repeats the whole snapshot every second. Re-render only when something shown changed,
   // so open menus, focus and clicks are not interrupted.
-  const sig = JSON.stringify([S.devices, S.groups, S.roomMap, st.pairing, st.mesh_ready, st.bluetooth_starting, st.pending_transactions, st.publication_pending, S.view === 'settings' ? st.command_timings : null, st.last_error, st.mqtt_enabled, st.mqtt_ready, st.startup_read, S.groupWorkflow, S.controllerViews, S.sceneWorkflow, sceneEpoch, st.jobs, st.keypad_saves, st.keypad_progress, st.anyplace_progress, st.claim_progress, S.view === 'add' && S.wiz?.step === 1 ? wizRows().map(rowSeenState) : null]);
+  const sig = JSON.stringify([S.devices, S.groups, S.roomMap, st.pairing, st.mesh_ready, st.bluetooth_starting, st.bluetooth_startup_retrying, st.pending_transactions, st.publication_pending, S.view === 'settings' ? st.command_timings : null, st.last_error, st.mqtt_enabled, st.mqtt_ready, st.startup_read, S.groupWorkflow, S.controllerViews, S.sceneWorkflow, sceneEpoch, st.jobs, st.keypad_saves, st.keypad_progress, st.anyplace_progress, st.claim_progress, S.view === 'add' && S.wiz?.step === 1 ? wizRows().map(rowSeenState) : null]);
   if (sig !== lastSig) { lastSig = sig; renderSoon(); }
 }
 let lastSig = '', lastCapabilityInstance = null, waitingSnapshot = null;

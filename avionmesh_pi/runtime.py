@@ -18,11 +18,16 @@ from .protocol import decrypt_mcp, encrypt_mcp, model_command, plan_light_comman
 GROUP_COMMAND_SETTLE_MS = 150
 TARGETED_FEEDBACK_GAP = 0.15
 FEEDBACK_RECHECK_MS = 600
-BLUETOOTH_STARTUP_GRACE_MS = 30_000
+BLUETOOTH_STARTUP_FAILURE_NOTICE = 3
+UNANSWERED_POWER_READ_NOTICE = 3
 
 
 class _BackgroundReadInterrupted(RuntimeError):
     """Foreground work took priority after a read transmission finished."""
+
+
+class _ReplyTimeout(asyncio.TimeoutError):
+    """The transport accepted the request, but the reply wait expired."""
 
 
 class Runtime:
@@ -42,7 +47,7 @@ class Runtime:
         self.claim_isolated = ({j['id'] for j in store.journals(pending=True)}
             if getattr(transport, 'ready', True) is False and not (client and client.is_connected) else set())
         self.mesh_ready = False
-        self._bluetooth_startup_deadline = None
+        self._bluetooth_startup_failures = None
         self.mqtt_ready = False
         self.mqtt_enabled = False
         self.last_error = None
@@ -57,7 +62,9 @@ class Runtime:
         self.local_light_states = {}
         self._display_light_history = {}  # Presentation only; never command or MQTT evidence.
         self._initial_light_deadlines = {}  # Bounded first-status display grace, not evidence.
+        self._unanswered_power_reads = {}  # Presentation only, scoped to this mesh session.
         self.startup_read_progress = None
+        self.startup_broadcast_progress = None
         self.observation_refresh_progress = None
         self.keypad_binding_refresher = None
         self._observation_task = None
@@ -88,8 +95,9 @@ class Runtime:
         for message in messages:
             self.sink(message)
 
-    def quarantined(self):
-        journals = self.store.journals(pending=True)
+    def quarantined(self, journals=None):
+        if journals is None:
+            journals = self.store.journals(pending=True)
         targets = {j['target'] for j in journals
                 if j['kind'] in ('remove', 'external_reset', 'keypad_setup', 'accessory_setup','accessory_native_setup', 'anyplace_setup', 'group_membership', 'dimmer_edit')}
         for journal in journals:
@@ -123,6 +131,7 @@ class Runtime:
                     and self.core.devices[target].product_id in LIGHTS
                     and target not in self.quarantined()}
         self.generation += 1
+        self._unanswered_power_reads.clear()
         self._group_refresh.clear()
         self._feedback_fields.clear()
         self._feedback_checks.clear()
@@ -216,8 +225,8 @@ class Runtime:
 
     def status(self):
         return {"mesh_ready": self.mesh_ready, "mqtt_ready": self.mqtt_ready,
-                "bluetooth_starting": (self._bluetooth_startup_deadline is not None
-                                       and self.clock() < self._bluetooth_startup_deadline),
+                "bluetooth_starting": self._bluetooth_startup_failures is not None,
+                "bluetooth_startup_retrying": (self._bluetooth_startup_failures or 0) >= BLUETOOTH_STARTUP_FAILURE_NOTICE,
                 "mqtt_enabled": self.mqtt_enabled,
                 "commissioning_only": getattr(self, "commissioning_only", False),
                 "preview_only": getattr(self, "preview_only", False),
@@ -232,6 +241,7 @@ class Runtime:
                     and j['status'] == 'verified' and j['detail'].get('publication_pending') is True
                     for j in self.store.journals()),
                 "sequence_history": sequence_status(self.store),
+                "startup_broadcast": dict(self.startup_broadcast_progress) if self.startup_broadcast_progress else None,
                 "observation_refresh": dict(self.observation_refresh_progress) if self.observation_refresh_progress else None,
                 "keypad_binding_refresh": dict(self.keypad_binding_refresher.progress) if self.keypad_binding_refresher else None,
                 "background_read_active": self._background_read_task is not None,
@@ -266,6 +276,31 @@ class Runtime:
             if target in self.core.devices and self.core.devices[target].product_id in LIGHTS
             and target not in quarantined and 0 < end - now <= 120000
             and not {'state', 'brightness'} & self._light_observations(target).keys()}
+
+    def power_read_status(self):
+        """Explain missing power readings without inferring reachability from polling order."""
+        if not (self.mesh_ready and self.transport.ready):
+            return {}
+        refresh = self.observation_refresh_progress or {}
+        startup = self.startup_read_progress or {}
+        polling = (self._observation_task is not None and refresh.get('state') != 'failed'
+                   or startup.get('state') in ('waiting', 'running'))
+        pending = self.store.journals(pending=True)
+        blocked = self.quarantined(pending) | {j['target'] for j in pending}
+        result = {}
+        for device in self.core.devices.values():
+            target = device.device_id
+            if (device.product_id not in LIGHTS or target in blocked
+                    or {'state', 'brightness'} & self._light_observations(target).keys()):
+                continue
+            misses = self._unanswered_power_reads.get(target, 0)
+            if misses >= UNANSWERED_POWER_READ_NOTICE:
+                result[str(target)] = 'no_reply'
+            elif misses:
+                result[str(target)] = 'retry_pending' if self._observation_task is not None else 'unconfirmed'
+            elif polling:
+                result[str(target)] = 'waiting'
+        return result
 
     def _remember_display_readings(self):
         history = {}
@@ -400,6 +435,7 @@ class Runtime:
                     {field: (value, received_ms) for field, value in update.items()})
                 if {"state", "brightness"} & update.keys():
                     self._initial_light_deadlines.pop(device.device_id, None)
+                    self._unanswered_power_reads.pop(device.device_id, None)
                 self.command_timings.observe(device.device_id, update, received_ms)
                 light_observed = True
         local_source = (device is not None and device.product_id == 91
@@ -529,13 +565,16 @@ class Runtime:
         try:
             generation=self.generation if generation is None else generation
             await self.send(plaintext,generation=generation,admission=admission)
-            if (asyncio.current_task() is self._background_read_task
-                    and plaintext[2:4] == b'\x73\x01'):
-                # Only background Get replies are expendable, and only AFTER
-                # send() completes. Never interrupt a radio send or a setter.
-                result = await self._wait_background_observation(future, timeout)
-            else:
-                result = await asyncio.wait_for(future, timeout)
+            try:
+                if (asyncio.current_task() is self._background_read_task
+                        and plaintext[2:4] == b'\x73\x01'):
+                    # Only background Get replies are expendable, and only AFTER
+                    # send() completes. Never interrupt a radio send or a setter.
+                    result = await self._wait_background_observation(future, timeout)
+                else:
+                    result = await asyncio.wait_for(future, timeout)
+            except asyncio.TimeoutError as error:
+                raise _ReplyTimeout() from error
             if generation!=self.generation:raise RuntimeError('Reply crossed a session boundary')
             return result
         finally:
@@ -660,7 +699,78 @@ class Runtime:
                 requested.add(field)
         return requested
 
-    async def read_light(self, target, *, field_gap=0, brightness_only=False):
+    def _missing_light_fields(self, device):
+        readings = self._light_observations(device.device_id)
+        missing = set()
+        if 'brightness' not in readings and 'state' not in readings:
+            missing.add('brightness')
+        if device.product_id in COLOR_LIGHTS and 'color_temp' not in readings:
+            missing.add('color_temp')
+        return missing
+
+    async def _startup_broadcast(self, generation):
+        """Request startup readings through one relay. Only observe() records replies."""
+        lights = [d for d in self.core.devices.values() if d.product_id in LIGHTS]
+        if len(lights) < 2:
+            return False
+        progress = self.startup_broadcast_progress = {
+            'state': 'starting', 'generation': generation, 'lights': len(lights),
+            'power_sent': False, 'color_sent': False, 'power_known': 0, 'color_known': 0}
+        started = self.clock()
+
+        def available():
+            return (generation == self.generation and self.mesh_ready and self.transport.ready
+                    and not self.operation.locked() and not self._foreground_requests
+                    and not self._group_refresh and not self._feedback_checks
+                    and self.clock() >= self._group_refresh_due and not self.store.journals(pending=True))
+
+        async def collect(seconds):
+            # Group feedback wakes the worker early. Never hold either lock while listening.
+            until = self.clock() + int(seconds * 1000)
+            while available():
+                remaining = until - self.clock()
+                if remaining <= 0:
+                    break
+                self._observation_requested.clear()
+                await self._wait_observation_refresh(remaining / 1000)
+
+        try:
+            for field, noun, sent in (('brightness', 10, 'power_sent'), ('color_temp', 29, 'color_sent')):
+                if not available():
+                    break
+                if not any(field in self._missing_light_fields(d) for d in lights):
+                    continue
+                if progress['power_sent']:
+                    await collect(1.0)
+                if not available():
+                    break
+                command = bytearray(model_command(0, 1, noun))
+                if noun == 10:
+                    command[7] = 0xd0  # ESP broadcast tag: dimmer replies are never button presses.
+                async with self._background_read() as admitted:
+                    if not admitted:
+                        break
+                    async with self.operation:
+                        await self.send(bytes(command), generation=generation)
+                progress[sent] = True
+                progress['state'] = 'collecting'
+            if (progress['power_sent'] or progress['color_sent']) and any(self._missing_light_fields(d) for d in lights):
+                await collect(2.0)
+        except (RuntimeError, ValueError, OSError, asyncio.TimeoutError):
+            # An uncertain broadcast never counts as a miss or triggers another broadcast.
+            progress['state'] = 'send_failed'
+        if generation != self.generation or not self.mesh_ready or not self.transport.ready:
+            progress['state'] = 'session_changed'
+            return False
+        sent_any = progress['power_sent'] or progress['color_sent']
+        if progress['state'] != 'send_failed':
+            progress['state'] = 'finished' if sent_any else 'skipped'
+        progress['power_known'] = sum('brightness' not in self._missing_light_fields(d) for d in lights)
+        progress['color_known'] = sum(d.product_id in COLOR_LIGHTS and 'color_temp' not in self._missing_light_fields(d) for d in lights)
+        progress['elapsed_ms'] = self.clock() - started
+        return sent_any
+
+    async def read_light(self, target, *, field_gap=0, brightness_only=False, missing_only=False):
         """Explicit local read, independent of HA exposure; never sends a setter."""
         device = self._light_read_device(target)
         generation, observed = self.generation, {}
@@ -673,6 +783,8 @@ class Runtime:
                     await self._light_read_gap(field_gap)
                     if self._foreground_requests and self._background_read_task is asyncio.current_task():
                         break
+                if missing_only and field not in self._missing_light_fields(device):
+                    continue
                 try:
                     reply = await self.exchange(model_command(target, 1, noun),
                         lambda packet, n=noun: packet.crypto_source == target
@@ -681,6 +793,11 @@ class Runtime:
                     observed.update(decode_light(reply))
                 except _BackgroundReadInterrupted:
                     break
+                except _ReplyTimeout:
+                    if field == 'brightness' and generation == self.generation and self.mesh_ready and self.transport.ready:
+                        if not {'state', 'brightness'} & self._light_observations(target).keys():
+                            misses = self._unanswered_power_reads.get(target, 0)
+                            self._unanswered_power_reads[target] = min(misses + 1, UNANSWERED_POWER_READ_NOTICE)
                 except asyncio.TimeoutError:
                     pass
         return {"target": target, "observed": observed,
@@ -1114,7 +1231,7 @@ class Runtime:
         finally:
             self._observation_requested.clear()
 
-    async def observation_refresh(self, *, cadence=30, settle=5, gap=0.5, tick=1):
+    async def observation_refresh(self, *, cadence=30, settle=5, gap=0.5, tick=1, broadcast_startup=False):
         """One MQTT-independent, paced read-only worker for the current session.
 
         Each light has its own lock scope and bounded read timeouts. Interactive
@@ -1132,10 +1249,13 @@ class Runtime:
             'controller_probe_tokens': 0, 'controller_probe_paused': None,
             'last_completed_ms': None, 'last_completed_generation': None}
         generation, next_pass, probes = None, 0, {}
+        next_periodic_target = 0
+        first_sweep_generation = None
         try:
             while True:
                 if generation != self.generation:
                     generation, probes = self.generation, {}
+                    next_periodic_target = 0
                     next_pass = self.clock() + int(settle * 1000)
                     progress.update(state='settling', generation=generation)
                 self._recheck_feedback()
@@ -1152,10 +1272,15 @@ class Runtime:
                     try:
                         await self._probe_local_controllers(generation, probes)
                         periodic = self.clock() >= next_pass and not self._group_refresh and not self._feedback_checks
+                        if periodic and broadcast_startup and generation == self.generation:
+                            broadcast_startup = False  # Once per process startup, never per inventory edit.
+                            if await self._startup_broadcast(generation):
+                                first_sweep_generation = generation
+                            continue  # Recheck foreground work, feedback and session before follow-up.
                         if (periodic or self._group_refresh) and generation == self.generation:
                             refresh = dict(self._group_refresh)
                             targets = sorted(d.device_id for d in self.core.devices.values()
-                                             if d.product_id in LIGHTS) if periodic else sorted(refresh)
+                                             if d.product_id in LIGHTS and d.device_id >= next_periodic_target) if periodic else sorted(refresh)
                             progress.update(state='running', lights=len(targets), answered=0, skipped=0, queries_sent=0)
                             preempted = False
                             for target in targets:
@@ -1168,6 +1293,8 @@ class Runtime:
                                 if generation != self.generation or not (self.mesh_ready and self.transport.ready):
                                     break
                                 if periodic and self._group_refresh:
+                                    # Resume here after group feedback, even on a long startup sweep.
+                                    next_periodic_target = target
                                     preempted = True
                                     break
                                 progress['state'] = 'running'
@@ -1178,7 +1305,13 @@ class Runtime:
                                         if not admitted:
                                             continue
                                         if periodic:
-                                            result = await self.read_light(target, field_gap=0.15)
+                                            if first_sweep_generation == generation:
+                                                if not self._missing_light_fields(self.core.devices[target]):
+                                                    progress['answered'] += 1
+                                                    continue
+                                                result = await self.read_light(target, field_gap=0.15, missing_only=True)
+                                            else:
+                                                result = await self.read_light(target, field_gap=0.15)
                                             progress['answered' if result['observed'] else 'skipped'] += 1
                                         else:
                                             begun = self.clock()
@@ -1207,6 +1340,8 @@ class Runtime:
                                 progress.update(state='idle', passes=progress['passes'] + 1,
                                     last_completed_ms=self.clock(), last_completed_generation=generation)
                                 if periodic and not preempted:
+                                    first_sweep_generation = None
+                                    next_periodic_target = 0
                                     next_pass = self.clock() + int(cadence * 1000)
                             if preempted:
                                 continue
@@ -1227,7 +1362,7 @@ class Runtime:
             progress['state'] = 'stopped'
             self._observation_task = None
 
-    async def startup_read(self, *, settle=5.0, gap=0.5, mesh_wait=600, busy_wait=60):
+    async def startup_read(self, *, settle=5.0, gap=0.5, mesh_wait=600, busy_wait=60, broadcast_startup=False):
         """Read every known light once after this process first reaches the mesh.
 
         States live only in memory, so a restart forgets them and lights do not report
@@ -1237,13 +1372,13 @@ class Runtime:
         """
         progress = self.startup_read_progress = {'state': 'waiting', 'lights': 0, 'answered': 0, 'skipped': 0}
         try:
-            return await self._startup_read(progress, settle, gap, mesh_wait, busy_wait)
+            return await self._startup_read(progress, settle, gap, mesh_wait, busy_wait, broadcast_startup)
         except Exception:
             # A convenience read must never stop the service it runs beside.
             progress['state'] = 'failed'
             return progress
 
-    async def _startup_read(self, progress, settle, gap, mesh_wait, busy_wait):
+    async def _startup_read(self, progress, settle, gap, mesh_wait, busy_wait, broadcast_startup):
         waited = 0.0
         while not (self.mesh_ready and getattr(self.transport, 'ready', False)):
             if waited >= mesh_wait:
@@ -1252,6 +1387,8 @@ class Runtime:
             await asyncio.sleep(1)
             waited += 1
         await asyncio.sleep(settle)  # let the new connection settle before radio work
+        generation = self.generation
+        missing_only = broadcast_startup and await self._startup_broadcast(generation)
         targets = sorted(d.device_id for d in self.core.devices.values() if d.product_id in LIGHTS)
         progress.update(state='running', lights=len(targets))
         for target in targets:
@@ -1268,7 +1405,13 @@ class Runtime:
                 async with self._background_read() as admitted:
                     if not admitted:
                         raise RuntimeError('Foreground request takes priority')
-                    reply = await self.read_light(target)
+                    if missing_only and generation == self.generation:
+                        if not self._missing_light_fields(self.core.devices[target]):
+                            progress['answered'] += 1
+                            continue
+                        reply = await self.read_light(target, missing_only=True)
+                    else:
+                        reply = await self.read_light(target)
                 progress['answered' if reply['observed'] else 'skipped'] += 1
             except (ValueError, RuntimeError, asyncio.TimeoutError):
                 progress['skipped'] += 1
@@ -1278,12 +1421,12 @@ class Runtime:
 
     async def bluetooth_loop(self):
         delay = 1
-        self._bluetooth_startup_deadline = self.clock() + BLUETOOTH_STARTUP_GRACE_MS
+        self._bluetooth_startup_failures = 0
         while True:
             try:
                 await self.transport.connect()
                 self.mesh_ready = True
-                self._bluetooth_startup_deadline = None
+                self._bluetooth_startup_failures = None
                 self.last_error = None
                 self.session()
                 self.emit(self.discovery())
@@ -1298,6 +1441,8 @@ class Runtime:
                 raise
             except Exception:
                 self.last_error = "bluetooth_connection_failed"
+                if self._bluetooth_startup_failures is not None:
+                    self._bluetooth_startup_failures = min(self._bluetooth_startup_failures + 1, BLUETOOTH_STARTUP_FAILURE_NOTICE)
             finally:
                 self.mesh_ready = False
                 await self.transport.disconnect()
