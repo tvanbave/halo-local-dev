@@ -1216,8 +1216,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
             return web.json_response({'error':'backup_unavailable'}, status=501)
         action = request.match_info['action']
         if request.method == 'GET':
-            return web.json_response(dict(manager.status(), owner_password_required=trusted_lan_no_auth))
-        if trusted_lan_no_auth:
+            return web.json_response(dict(manager.status(), owner_password_required=trusted_lan_no_auth and not manager.trusted_lan_backups))
+        if trusted_lan_no_auth and not manager.trusted_lan_backups:
             from .browser_auth import authorized, backup_owner_refused
             from .service import private_text
             header = request.headers.get('Authorization', '')

@@ -101,6 +101,65 @@ class BackupHttpTests(unittest.IsolatedAsyncioTestCase):
                 response=await client.post('/api/backup/create',headers=dict(headers,**extra),json={'password':PASSWORD})
                 self.assertEqual(response.status,403)
 
+    async def test_trusted_lan_optional_password_and_replacement_restore(self):
+        headers = {'Host': f'{HOST}:{PORT}', 'Origin': f'http://{HOST}:{PORT}'}
+        self.manager.trusted_lan_backups = True
+        client = await self.open_client(server.create_app(self.fixture.runtime, self.token,
+            allowed_host=headers['Host'], trusted_lan_no_auth=True))
+        status = await (await client.get('/api/backup/status', headers=headers)).json()
+        self.assertFalse(status['owner_password_required'])
+        for origin in ('https://unrelated.invalid', 'null'):
+            response = await client.post('/api/backup/create', headers=dict(headers, Origin=origin),
+                json={'unencrypted': True})
+            self.assertEqual(response.status, 403)
+        for body in ({'password': ''}, {'unencrypted': 1}, {'password': PASSWORD, 'unencrypted': True}):
+            response = await client.post('/api/backup/create', headers=headers, json=body)
+            self.assertEqual(response.status, 400)
+        response = await client.post('/api/backup/create', headers=headers, json={'unencrypted': True})
+        self.assertEqual(response.status, 200)
+        plain = await response.json()
+        raw = base64.b64decode(plain['archive'])
+        self.assertFalse(plain['summary']['encrypted'])
+        self.assertNotIn(self.token.encode(), raw)
+        damaged = raw[:-1] + bytes([raw[-1] ^ 1])
+        response = await client.post('/api/backup/preview', headers=headers,
+            json={'archive': base64.b64encode(damaged).decode()})
+        self.assertEqual(response.status, 400)
+        protected = await (await client.post('/api/backup/create', headers=headers,
+            json={'password': PASSWORD})).json()
+        self.assertTrue(protected['summary']['encrypted'])
+        response = await client.post('/api/backup/preview', headers=headers, json={'archive': protected['archive']})
+        self.assertEqual(response.status, 400)
+        self.assertIsNone(self.manager.review)
+        self.manager.trusted_lan_backups = False
+        response = await client.post('/api/backup/create', headers=dict(headers, **self.headers),
+            json={'unencrypted': True})
+        self.assertEqual(response.status, 400)
+        response = await client.post('/api/backup/preview', headers=dict(headers, **self.headers),
+            json={'archive': plain['archive']})
+        self.assertTrue((await response.json())['can_restore'])
+
+        destination = self.root / 'trusted-replacement'
+        ready = asyncio.Event()
+        with q.installation_lock(destination), patch.dict('os.environ', {'HALO_TRUSTED_LAN_BACKUPS': 'true'}):
+            token = q.password(destination)
+            setup = await self.open_client(q.setup_app(destination, HOST, PORT, 'hci0', token, ready))
+            status = await (await setup.get('/api/backup/status', headers=headers)).json()
+            self.assertTrue(status['trusted_lan_backups'])
+            self.assertFalse(status['owner_password_required'])
+            response = await setup.post('/api/backup/preview', headers=headers, json={'archive': plain['archive']})
+            preview = await response.json()
+            self.assertTrue(preview['can_restore'])
+            self.assertFalse(ready.is_set())
+            response = await setup.post('/api/backup/restore', headers=headers, json=confirmations(preview))
+            self.assertTrue((await response.json())['accepted'])
+            self.assertTrue(ready.is_set())
+            restored = q.existing_config(destination, HOST, PORT, 'hci0')
+            self.assertEqual(restored['node'], self.fixture.config['node'])
+            self.assertEqual(private_text(restored['api_token_file']), token)
+            self.assertEqual(private_text(restored['mesh_passphrase_file']),
+                             private_text(self.fixture.config['mesh_passphrase_file']))
+
     async def test_expired_review_and_consumed_restore_never_apply_twice(self):
         result=await self.create();preview=await self.preview(result)
         original_clock=self.manager.clock

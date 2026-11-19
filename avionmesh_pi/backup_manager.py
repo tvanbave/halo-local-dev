@@ -274,9 +274,12 @@ def finish_restore(config, plan):
             fail('invalid_installation', 'The restore directory must be private.')
         stage = parent / ('.preparing-' + identifier); final = parent / identifier
         make_installation(stage, final, database, plan['decoded']['settings'], destination_settings(config))
-        # Recovery copy uses the owner's supplied encryption password. The old
-        # generation also remains intact; no database rollback is automatic.
-        archive = encode_backup(current, plan['current_settings'], plan['password'])
+        # Always encrypt the local recovery copy, including after a passwordless import.
+        recovery_password = plan['password']
+        if recovery_password is None:
+            recovery_password = secrets.token_urlsafe(32)
+            write_private(stage / 'before-restore.password', (recovery_password + '\n').encode())
+        archive = encode_backup(current, plan['current_settings'], recovery_password)
         write_private(stage / 'before-restore.halobackup', archive)
         write_json(stage / 'restore-report.json', dict(report, restored_at=now()))
         fsync_dir(stage); os.rename(stage, final); fsync_dir(parent)
@@ -289,6 +292,8 @@ class BackupManager:
     def __init__(self, runtime=None, config=None, restart=None, *, install=None, destination=None, clock=time.monotonic):
         self.runtime, self.config, self.restart = runtime, config, restart
         self.install, self.destination, self.clock = install, destination, clock
+        # A host-only option. Backup content and API requests cannot enable it.
+        self.trusted_lan_backups = os.environ.get('HALO_TRUSTED_LAN_BACKUPS', '').strip().lower() == 'true'
         self.lock = asyncio.Lock(); self.review = None; self.expiry = None
 
     def clear(self):
@@ -298,11 +303,11 @@ class BackupManager:
 
     def status(self):
         if self.runtime is None:
-            return dict(enabled=True, backup_supported=False, restore_supported=True, reason=None,
+            return dict(enabled=True, trusted_lan_backups=self.trusted_lan_backups, backup_supported=False, restore_supported=True, reason=None,
                 current=None, last_backup=None)
         inventory = self.runtime.store.inventory()
         from .bridge import LIGHTS, CONTROLLERS
-        return dict(enabled=True, backup_supported=True, restore_supported=True, reason=None,
+        return dict(enabled=True, trusted_lan_backups=self.trusted_lan_backups, backup_supported=True, restore_supported=True, reason=None,
             current=dict(name=self.config['node'], version=__version__, devices=len(inventory['devices']),
                 controllers=sum(d['product_id'] in CONTROLLERS for d in inventory['devices']),
                 groups=sum(not g['protected'] for g in inventory['groups']),
@@ -326,21 +331,28 @@ class BackupManager:
                 self.runtime.operation.release()
 
     async def create(self, data):
-        if not isinstance(data, dict) or set(data) != {'password'}:
+        plain = (self.trusted_lan_backups and isinstance(data, dict) and set(data) == {'unencrypted'}
+                 and data['unencrypted'] is True)
+        if not plain and (not isinstance(data, dict) or set(data) != {'password'}):
             fail('invalid_request', 'Enter a backup password.', 400)
         async with self.lock:
             database, settings = await self.capture()
             if database is None:
                 fail('backup_unavailable', 'There is no installation to back up yet.')
-            archive = await asyncio.to_thread(encode_backup, database, settings, data['password'])
-            decoded = await asyncio.to_thread(decode_backup, archive, data['password'])
+            if self.trusted_lan_backups:
+                # Restores keep the destination owner credential. A portable copy
+                # must not grant future administrative access to this source Pi.
+                settings = dict(settings, api_token=secrets.token_urlsafe(32))
+            password = data.get('password')
+            archive = await asyncio.to_thread(encode_backup, database, settings, password, unencrypted=plain)
+            decoded = await asyncio.to_thread(decode_backup, archive, password)
             summary = decoded['summary']
             self.runtime.store.set('installation_last_backup', dict(created_at=decoded['created_at'], version=__version__))
             return dict(filename='halo-local-' + decoded['created_at'].replace(':', '-') + '.halobackup',
                         archive=base64.b64encode(archive).decode('ascii'), summary=summary)
 
     async def preview(self, data):
-        if not isinstance(data, dict) or set(data) != {'password', 'archive'}:
+        if not isinstance(data, dict) or set(data) not in ({'password', 'archive'}, {'archive'}):
             fail('invalid_request', 'Choose a backup file and enter its password.', 400)
         if not isinstance(data['archive'], str) or len(data['archive']) > MAX_HTTP_BYTES:
             fail('backup_too_large', 'The backup file is too large.', 413)
@@ -350,7 +362,7 @@ class BackupManager:
                 archive = base64.b64decode(data['archive'], validate=True)
             except (ValueError, TypeError):
                 fail('invalid_backup', 'This is not a valid HALO Local backup.', 400)
-            decoded = await asyncio.to_thread(decode_backup, archive, data['password'])
+            decoded = await asyncio.to_thread(decode_backup, archive, data.get('password'))
             check_version(decoded['version'])
             current, settings = await self.capture()
             archive_digest = hashlib.sha256(archive).hexdigest()
@@ -367,7 +379,7 @@ class BackupManager:
             revision = digest(dict(digest=archive_digest, mode=mode, node=self.config['node'] if self.config else None))
             if not blockers:
                 self.review = dict(id=identifier, revision=revision, decoded=decoded, digest=archive_digest,
-                    password=data['password'], expires=self.clock()+PREVIEW_SECONDS)
+                    password=data.get('password'), expires=self.clock()+PREVIEW_SECONDS)
                 self.expiry = asyncio.get_running_loop().call_later(PREVIEW_SECONDS, self.clear)
             return dict(preview_id=identifier if not blockers else None, revision=revision, expires_in=PREVIEW_SECONDS,
                 summary=decoded['summary'], mode=mode, can_restore=not blockers, blockers=blockers,

@@ -431,8 +431,8 @@ def setup_app(directory, host, port, adapter, token, ready, *, cloud_setup=None,
 
     async def backup_action(request):
         if request.method == 'GET':
-            return web.json_response(dict(backups.status(), owner_password_required=not browser_login))
-        if not browser_login and not authorized(request.headers.get('Authorization', ''), token):
+            return web.json_response(dict(backups.status(), owner_password_required=not browser_login and not backups.trusted_lan_backups))
+        if not browser_login and not backups.trusted_lan_backups and not authorized(request.headers.get('Authorization', ''), token):
             from .browser_auth import backup_owner_refused
             return backup_owner_refused()
         empty_installation()

@@ -310,6 +310,19 @@ class InstallationSwitchTests(unittest.IsolatedAsyncioTestCase):
         finally:new.close()
         self.assertEqual(b.resolve_config(original)['state_directory'],result['state_directory'])
 
+    async def test_plain_restore_saves_an_encrypted_local_recovery_copy(self):
+        plan = self.fixture.backup()
+        plan['password'] = None
+        await self.stopped()
+        installed = b.finish_restore(self.fixture.config, plan)
+        generation = Path(installed['state_directory']).parent
+        password_file = generation / 'before-restore.password'
+        self.assertEqual(password_file.stat().st_mode & 0o077, 0)
+        recovered = decode_backup((generation / 'before-restore.halobackup').read_bytes(),
+                                  private_text(password_file))
+        self.assertTrue(recovered['summary']['encrypted'])
+        self.assertEqual(recovered['database'], plan['decoded']['database'])
+
     async def test_destination_access_and_removal_survive_in_place_restore(self):
         from avionmesh_pi.service import trusted_lan_mode, browser_login_mode
         archive = self.fixture.backup()

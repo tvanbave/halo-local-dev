@@ -19,7 +19,7 @@ lights, and it does not send old group, scene or button programming requests.
 | MQTT settings and credentials, bridge identity, sharing choices and discovery identifiers | Home Assistant automations, dashboards and its own registry backup |
 | Database records, radio counter, allocated/retired addresses and all operation receipts, including unfinished operations | Changes made after the backup was created |
 
-The archive is encrypted and checked before it is offered for download. Keep its
+By default the archive is encrypted and checked before it is offered for download. Keep its
 password separately: it is required to open the backup and cannot be recovered
 from the file. The backup is local; no HALO cloud account is needed to create or
 restore it.
@@ -28,9 +28,21 @@ The format supports a database up to **8 MiB** and portable settings up to
 **128 KiB**. This limit keeps backup processing bounded on smaller Pis. Larger
 installations are refused rather than exported incompletely.
 
+## Optional trusted-LAN backups (dev77 and later)
+
+To allow anyone who can reach a passwordless bridge on your LAN to download and restore a full backup, add this line to the installation directory’s `.env` file:
+
+```dotenv
+HALO_TRUSTED_LAN_BACKUPS=true
+```
+
+Run `docker compose up -d` using your usual Compose file. Custom containers take the same environment variable. The default is false. This setting belongs to the Pi and stays outside the backup. Enable it separately on a fresh installation if you want the same access there. An existing browser login still applies.
+
+With this option on, **Download backup** saves a single file you can restore without a password. Anyone holding the file can read its credentials. Select **Protect with a password** for an encrypted copy. Restore detects the file format and asks for the original password only for an encrypted file. An owner can also restore an unencrypted file on a dev77 or newer installation with trusted-LAN backups switched off.
+
 ## Confirm backup access
 
-On a passwordless bridge, daily controls open as usual. Downloading a full backup,
+With the default backup settings on a passwordless bridge, daily controls open as usual. Downloading a full backup,
 reviewing an uploaded backup and restoring it require the **destination Pi’s
 bridge owner password**. Get it in a terminal on that Pi, from the directory
 where you start HALO Local:
@@ -50,8 +62,8 @@ restore it. Use a trusted connection when entering either password.
 ## Download a backup
 
 1. Open **Settings → Backup & restore** on the running bridge.
-2. Enter this Pi’s owner password if prompted. For the backup file, enter and confirm a separate password of **12–256 characters**.
-3. Choose **Download backup**. Wait for the encrypted file to finish downloading.
+2. Enter this Pi’s owner password if prompted. For the backup file, if password protection is selected or required, enter and confirm a separate password of **12–256 characters**.
+3. Choose **Download backup**. Wait for the backup file to finish downloading.
 4. Keep the `.halobackup` file on another computer or storage device, together with
    a separately stored record of its password.
 
@@ -72,7 +84,7 @@ and a final-transfer **Move to another Pi** action are not implemented yet.
    saved installation must also remain off. Restore does not remotely stop them.
 3. Open the replacement Pi’s page and choose **Restore a backup**. Enter this Pi’s
    owner password if asked, select the `.halobackup` file, enter the file’s
-   backup password and choose **Review backup**.
+   password if prompted and choose **Review backup**.
 4. Check the bridge identity, backup date/version, device, group and scene counts,
    and any warnings or operations needing review.
 5. Confirm the old bridge is stopped, that this is the backup to restore, and that
@@ -121,7 +133,7 @@ must not erase knowledge of devices or uncertain operations.
 
 Before switching installations, the bridge retains its private previous
 installation and creates an encrypted **`before-restore.halobackup`** recovery copy
-in its data volume. That file uses the password supplied for this restore. These
+in its data volume. When restoring an encrypted backup, this file uses the same password. When restoring an unencrypted backup, the Pi generates a password for the recovery copy and saves it beside that copy in the private file `before-restore.password`. These
 copies are preserved for recovery review; they are not automatically started or
 used for rollback. Do not manually restart a retained installation alongside the
 restored bridge.

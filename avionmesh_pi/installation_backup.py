@@ -2,8 +2,8 @@
 
 Callers own obtaining a consistent SQLite snapshot and deciding whether it may
 be restored. This module never opens Store, changes a live database, starts a
-service or grants permission to transmit. Every database byte, including private
-operation receipts, remains inside an authenticated password-encrypted envelope.
+service or grants permission to transmit. The default envelope uses password-based encryption. Explicit portable exports
+use a separate file signature and a checksum for accidental corruption.
 """
 from datetime import datetime, timezone
 import hashlib
@@ -28,6 +28,7 @@ from .mqtt_settings import SettingsError, _document as mqtt_document
 from .protocol import derive_mcp_key
 
 MAGIC = b'HALO-LOCAL-INSTALLATION\x00\x01'
+PLAIN_MAGIC = b'HALO-LOCAL-PLAIN\x00\x01'
 # Keep UI requests and private validation copies within the Pi container limits.
 # The separate offline state-backup format retains its existing 64 MiB bound.
 MAX_DATABASE_BYTES = 8 * 1024 * 1024
@@ -230,19 +231,21 @@ def _version(value):
     return value
 
 
-def _summary(state, metadata):
+def _summary(state, metadata, *, encrypted):
     fields = ('devices','lights','controllers','groups','rooms','scenes','pending_operations',
               'retirement_record_present','sequence_exhausted')
     return {key: state[key] for key in fields} | {
         'node': metadata['settings']['node'], 'created_at': metadata['created_at'],
         'version': metadata['version'], 'mqtt_enabled': metadata['settings']['mqtt']['enabled'],
-        'encrypted': True, 'integrity_verified': True,
+        'encrypted': encrypted, 'integrity_verified': True,
     }
 
 
-def encode_backup(database, settings, password, *, created_at=None, version=__version__):
+def encode_backup(database, settings, password, *, created_at=None, version=__version__, unencrypted=False):
     """Validate and encrypt an already consistent installation snapshot."""
-    secret = _password(password)
+    if unencrypted and password is not None:
+        _fail('invalid_backup_password', 'Choose either a password or an unencrypted backup.')
+    secret = None if unencrypted else _password(password)
     settings = _settings(settings)
     inspect_database(database, settings['mesh_passphrase'])
     metadata = {'format': 1, 'created_at': _stamp(created_at or datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')),
@@ -254,25 +257,37 @@ def encode_backup(database, settings, password, *, created_at=None, version=__ve
         _fail('invalid_backup_settings', 'The portable backup settings could not be encoded.')
     if len(encoded) > MAX_METADATA_BYTES:
         _fail('invalid_backup_settings', 'The portable backup settings are too large.')
+    plaintext = struct.pack('>I', len(encoded)) + encoded + database
+    if unencrypted:
+        return PLAIN_MAGIC + hashlib.sha256(plaintext).digest() + plaintext
     salt, nonce = os.urandom(_SALT_BYTES), os.urandom(_NONCE_BYTES)
     header = MAGIC + salt + nonce
-    plaintext = struct.pack('>I', len(encoded)) + encoded + database
     return header + AESGCM(_key(secret, salt)).encrypt(nonce, plaintext, header)
 
 
 def decode_backup(blob, password):
     """Authenticate and validate an archive, without applying its contents."""
-    secret = _password(password)
-    if (not isinstance(blob, bytes) or not _HEADER_BYTES + _TAG_BYTES + 4 + 512 < len(blob) <= MAX_ARCHIVE_BYTES
-            or blob[:len(MAGIC)] != MAGIC):
+    if not isinstance(blob, bytes) or len(blob) > MAX_ARCHIVE_BYTES:
         _fail('invalid_backup', 'Choose a supported HALO Local installation backup.')
-    header = blob[:_HEADER_BYTES]
-    salt = header[len(MAGIC):len(MAGIC) + _SALT_BYTES]
-    nonce = header[-_NONCE_BYTES:]
-    try:
-        plaintext = AESGCM(_key(secret, salt)).decrypt(nonce, blob[_HEADER_BYTES:], header)
-    except InvalidTag:
-        _fail('invalid_password_or_backup', 'The password is incorrect or the backup is damaged.')
+    encrypted = blob.startswith(MAGIC)
+    if encrypted and len(blob) > _HEADER_BYTES + _TAG_BYTES + 4 + 512:
+        secret = _password(password)
+        header = blob[:_HEADER_BYTES]
+        salt = header[len(MAGIC):len(MAGIC) + _SALT_BYTES]
+        nonce = header[-_NONCE_BYTES:]
+        try:
+            plaintext = AESGCM(_key(secret, salt)).decrypt(nonce, blob[_HEADER_BYTES:], header)
+        except InvalidTag:
+            _fail('invalid_password_or_backup', 'The password is incorrect or the backup is damaged.')
+    elif blob.startswith(PLAIN_MAGIC) and len(blob) > len(PLAIN_MAGIC) + 32 + 4 + 512:
+        if password is not None:
+            _fail('invalid_backup_password', 'This backup opens without a password.')
+        offset = len(PLAIN_MAGIC)
+        plaintext = blob[offset + 32:]
+        if not hmac.compare_digest(blob[offset:offset + 32], hashlib.sha256(plaintext).digest()):
+            _fail('invalid_backup', 'The backup checksum did not match. Choose the original file.')
+    else:
+        _fail('invalid_backup', 'Choose a supported HALO Local installation backup.')
     length = struct.unpack('>I', plaintext[:4])[0]
     if not 1 <= length <= MAX_METADATA_BYTES or len(plaintext) < 4 + length + 512:
         _fail('invalid_backup', 'The backup payload is incomplete or invalid.')
@@ -291,4 +306,4 @@ def decode_backup(blob, password):
         _fail('invalid_backup', 'The database size or checksum does not match the backup.')
     state = inspect_database(database, settings['mesh_passphrase'])
     return {'format': 1, 'created_at': metadata['created_at'], 'version': metadata['version'],
-            'database': database, 'settings': settings, 'summary': _summary(state, metadata)}
+            'database': database, 'settings': settings, 'summary': _summary(state, metadata, encrypted=encrypted)}

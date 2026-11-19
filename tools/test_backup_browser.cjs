@@ -46,6 +46,28 @@ const snapshot=()=>({status:{mesh_ready:true,mqtt_enabled:false,mqtt_ready:false
  const preview=async(p)=>{await upload(p);await p.getByRole('button',{name:'Review backup',exact:true}).click();await p.getByRole('heading',{name:'Review this backup'}).waitFor();};
  const confirm=async(p)=>{for(const id of ['backupConfirmStopped','backupConfirmReplace','backupConfirmHistory'])if(await p.locator('#'+id).count())await p.locator('#'+id).check();};
  const posts=s=>s.calls.filter(c=>c.method==='POST');
+ await scenario('trusted-lan-optional-backup-password',async(p,s)=>{
+  s.status.trusted_lan_backups=true;
+  await p.locator('#backupRefresh').click();
+  await p.locator('#backupProtect').waitFor();
+  assert(await p.locator('#backupPassword').isHidden());
+  await p.locator('#backupCreate').click();
+  await p.getByText(/Backup downloaded without a password/).waitFor();
+  assert.deepEqual(posts(s).at(-1).body,{unencrypted:true});
+  await p.locator('#backupProtect').check();
+  await p.locator('#backupPassword').fill(password);
+  await p.locator('#backupPasswordConfirm').fill(password);
+  await p.locator('#backupCreate').click();
+  await p.getByText(/Encrypted backup created/).waitFor();
+  assert.deepEqual(posts(s).at(-1).body,{password});
+  await p.locator('#restoreFile').setInputFiles({name:'copy.halobackup',mimeType:'application/octet-stream',buffer:Buffer.from('HALO-LOCAL-PLAIN\x00\x01synthetic')});
+  await p.locator('#backupPreview').click();
+  await p.getByText('Review this backup',{exact:true}).waitFor();
+  assert.deepEqual(Object.keys(posts(s).at(-1).body),['archive']);
+  await p.locator('#backupDismiss').click();
+  await upload(p);
+  assert(await p.locator('#restorePassword').isVisible());
+ },{mobile:true});
  await scenario('backup-owner-required-on-passwordless-bridge',async(p,s)=>{
   s.status.owner_password_required=true;
   await p.getByRole('button',{name:'Refresh backup status'}).click();

@@ -133,7 +133,7 @@ UID_MAX 60000 range". That is expected. Nothing needs restarting.
 
 ## 6. Download and start HALO Local
 
-For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt dev76 image and commands](https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev76). To build from source, continue below.
+For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt dev77 image and commands](https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev77). To build from source, continue below.
 
 ```sh
 git clone https://github.com/tvanbave/halo-local-dev.git halo-local
@@ -174,7 +174,7 @@ browser login is required by default. Then choose **one** of:
 
 - **Start a new network** to pair factory-reset lights and controllers locally. An A19 can be the first light with automatic setup.
 - **Import existing lights** to bring over a HALO Home or Avi-on network. Sign in, pick your location and review the inventory. Stop any other bridge controlling that network before confirming the import.
-- **Restore a backup** to move an existing bridge to an empty replacement Pi. Stop the source bridge, select its encrypted file and review the installation before confirming. See [Backup and restore](BACKUP.md).
+- **Restore a backup** to move an existing bridge to an empty replacement Pi. Stop the source bridge, select its full backup file and review the installation before confirming. See [Backup and restore](BACKUP.md).
 
 Home Assistant can be connected after any of these choices.
 
@@ -237,10 +237,12 @@ removal controls on an older installation, follow
 
 ### Back up and restore
 
+For the optional trusted-LAN workflow with passwordless downloads and restores, see [Trusted-LAN backups](BACKUP.md#optional-trusted-lan-backups-dev77-and-later). You can still select **Protect with a password** when downloading.
+
 Open **Settings → Backup & restore**. On a passwordless bridge running dev71 or
-later, enter this Pi’s owner password when prompted. Enter and confirm a separate
+later, enter this Pi’s owner password when prompted. For a password-protected file, enter and confirm a separate
 backup password of 12–256 characters and choose **Download backup**. Keep the
-encrypted `.halobackup` file off the Pi and its password separately.
+`.halobackup` file off the Pi and save any password separately.
 
 To replace a Pi without re-pairing lights, choose **Restore a backup**
 on the replacement's first-run page, review the file and confirm that the old

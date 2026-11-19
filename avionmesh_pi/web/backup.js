@@ -6,10 +6,11 @@ window.BridgeBackup = (() => {
   const MAX_REQUEST_BYTES = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + 16384;
   let panel = null, options = {}, status = null, loading = false, busy = false, attempted = false;
   let preview = null, expires = 0, expiryTimer = null, loadAttempted = false, finished = false;
+  let selectedPlainFile = null, inspectingFile = false;
   const field = id => panel?.querySelector('#' + id);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const message = text => { if (field('backupResult')) field('backupResult').textContent = text; };
-  const clearArchiveInputs = () => { for (const id of ['backupPassword','backupPasswordConfirm','restorePassword','restoreFile']) if (field(id)) field(id).value = ''; };
+  const clearArchiveInputs = () => { selectedPlainFile = null; inspectingFile = false; for (const id of ['backupPassword','backupPasswordConfirm','restorePassword','restoreFile']) if (field(id)) field(id).value = ''; };
   function clearOwner() { if (field('backupOwnerPassword')) field('backupOwnerPassword').value = ''; }
   function clearSecrets() { clearArchiveInputs(); clearOwner(); }
   function ownerReady() {
@@ -44,16 +45,19 @@ window.BridgeBackup = (() => {
   function build() {
     const element = document.createElement('section'); element.className = 'card backup-panel'; element.setAttribute('aria-label', options.setup ? 'Restore a backup' : 'Backup and restore');
     element.innerHTML = `${options.setup ? '<h2>Restore a HALO Local backup</h2>' : ''}
-      <p>Keep your paired lights, names, rooms, groups, scenes, controller records and Home Assistant sharing. A full backup also includes your mesh and MQTT credentials, protected by your backup password.</p>
+      <p>Keep your paired lights, names, rooms, groups, scenes, controller records and Home Assistant sharing. A full backup also includes your mesh and MQTT credentials, which are needed to control your lights and connect to your broker.</p>
       <p class="hint">Home Assistant automations need a separate Home Assistant backup. Changes made after this backup are not included.</p>
       <p id="backupAvailability" role="status">Checking backup support…</p>
+      <p class="hint" id="trustedBackupNotice" hidden>Trusted-LAN backups are enabled on this Pi. Anyone with bridge access can download and restore full backups.</p>
       <div class="field" id="backupOwnerField" hidden>
         <label for="backupOwnerPassword">This Pi’s bridge owner password</label>
         <input class="inp" id="backupOwnerPassword" type="password" maxlength="4096" autocomplete="off" aria-describedby="backupOwnerHelp">
-        <p class="hint" id="backupOwnerHelp">Find this Pi’s password by running <code>docker compose exec bridge python -m avionmesh_pi login-info</code> on the Pi. The backup file has its own password.</p>
+        <p class="hint" id="backupOwnerHelp">From the HALO Local installation directory on this Pi, run <code>docker compose exec bridge python -m avionmesh_pi login-info</code> for the owner password. Custom installations use the configured API credential.</p>
       </div>
       ${!options.setup ? `<form id="backupCreateForm" autocomplete="off"><fieldset id="backupCreateFields" disabled>
-        <h4>Download a full backup</h4><p class="hint">Save the file somewhere other than this Pi. Keep its password separately; it cannot be recovered from the file.</p>
+        <h4>Download a full backup</h4><p class="hint">Save the file somewhere other than this Pi.</p>
+        <label id="backupProtectChoice" hidden><input type="checkbox" id="backupProtect"> Protect with a password</label>
+        <p class="hint" id="plainBackupHint" hidden>Anyone with this file can read your lighting and MQTT credentials. Store it somewhere private.</p>
         <div class="field"><label for="backupPassword">New backup password</label><input class="inp" id="backupPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password" aria-describedby="backupPasswordHint"></div>
         <div class="field"><label for="backupPasswordConfirm">Confirm backup password</label><input class="inp" id="backupPasswordConfirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></div>
         <p class="hint" id="backupPasswordHint">Use at least 12 characters. The file includes credentials needed to control your lights.</p>
@@ -63,7 +67,7 @@ window.BridgeBackup = (() => {
         ${!options.setup ? '<h4>Restore a backup</h4>' : ''}
         <p>Choose a full HALO Local backup to review before restoring. A device-list export is not a full backup.</p>
         <div class="field"><label for="restoreFile">Backup file</label><input class="inp" id="restoreFile" type="file" accept=".halobackup,.avionbackup,application/octet-stream" required aria-describedby="backupFileHint"></div>
-        <p class="hint" id="backupFileHint">Choose the encrypted file downloaded from Backup & restore.</p>
+        <p class="hint" id="backupFileHint">Choose the full backup file downloaded from Backup & restore.</p>
         <div class="field"><label for="restorePassword">Backup password</label><input class="inp" id="restorePassword" type="password" required minlength="12" maxlength="256" autocomplete="off"></div>
         <button class="btn" id="backupPreview" type="submit">Review backup</button>
       </fieldset></form>
@@ -79,6 +83,24 @@ window.BridgeBackup = (() => {
     field('backupOwnerField').hidden = !ownerRequired;
     field('backupOwnerPassword').required = ownerRequired;
     field('backupOwnerPassword').disabled = blocked || !ownerRequired;
+    const trusted = status?.trusted_lan_backups === true;
+    field('trustedBackupNotice').hidden = !trusted;
+    if (field('backupProtectChoice')) {
+      field('backupProtectChoice').hidden = !trusted;
+      const protect = !trusted || field('backupProtect').checked;
+      for (const id of ['backupPassword','backupPasswordConfirm']) {
+        const input = field(id);
+        input.disabled = !protect;
+        input.parentElement.hidden = !protect;
+      }
+      field('backupPasswordHint').hidden = !protect;
+      field('plainBackupHint').hidden = protect;
+    }
+    const file = field('restoreFile').files?.[0];
+    const needsPassword = !!file && !inspectingFile && selectedPlainFile !== file;
+    field('restorePassword').disabled = !needsPassword;
+    field('restorePassword').parentElement.hidden = !needsPassword;
+    field('backupPreview').disabled = inspectingFile;
     if (field('backupCreateFields')) field('backupCreateFields').disabled = blocked || status?.enabled === false || !status?.backup_supported;
     field('backupRestoreFields').disabled = blocked || status?.enabled === false || !status?.restore_supported || attempted;
     field('backupRefresh').disabled = busy || loading || finished;
@@ -138,7 +160,8 @@ window.BridgeBackup = (() => {
     const password = field('backupPassword'), confirm = field('backupPasswordConfirm');
     confirm.setCustomValidity(confirm.value === password.value ? '' : 'The two passwords must match.');
     if (!ownerReady() || !field('backupCreateForm').reportValidity()) return;
-    let data = {password:password.value}; clearArchiveInputs(); setBusy(true); message('Creating and checking your encrypted backup…');
+    const plain = status.trusted_lan_backups === true && !field('backupProtect').checked;
+    let data = plain ? {unencrypted:true} : {password:password.value}; clearArchiveInputs(); setBusy(true); message('Creating and checking your backup…');
     try {
       const result = await request('/api/backup/create',data); data.password = '';
       if (typeof result.archive !== 'string' || !result.archive || result.archive.length >= MAX_REQUEST_BYTES) throw new Error('Missing backup file');
@@ -147,7 +170,7 @@ window.BridgeBackup = (() => {
       const url = URL.createObjectURL(new Blob(chunks,{type:'application/octet-stream'})), link = document.createElement('a');
       const name = typeof result.filename === 'string' ? result.filename.split(/[\\/]/).pop().replace(/[\x00-\x1f\x7f]/g,'').slice(0,128) : '';
       link.href = url; link.download = name || 'halo-local-' + new Date().toISOString().slice(0,10) + '.halobackup'; document.body.append(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
-      message('Encrypted backup created. Check your browser’s downloads and keep the file and password safe. No lights were reprogrammed.');
+      message(plain ? 'Backup downloaded without a password. Keep the file private.' : 'Encrypted backup created. Keep the downloaded file and its password safe.');
     } catch (error) { message(failure(error,'The backup download was not confirmed. Check your downloads before creating another backup. Nothing is retried automatically.')); }
     finally { data.password = ''; data = null; clearSecrets(); setBusy(false); }
   }
@@ -156,7 +179,8 @@ window.BridgeBackup = (() => {
     if (!ownerReady() || !field('backupRestoreForm').reportValidity()) return;
     const file = field('restoreFile').files?.[0]; if (!file) return;
     if (!file.size || file.size > MAX_UPLOAD_BYTES) { message('That file is empty or too large for this bridge. Nothing was uploaded or restored.'); clearSecrets(); return; }
-    let data = {password:field('restorePassword').value,archive:''}; setBusy(true); dropPreview(); message('Opening and checking the backup. Nothing is being restored yet…');
+    if (inspectingFile) return;
+    let data = selectedPlainFile === file ? {archive:''} : {archive:'',password:field('restorePassword').value}; setBusy(true); dropPreview(); message('Opening and checking the backup. Nothing is being restored yet…');
     try {
       data.archive = await fileBytes(file); clearArchiveInputs();
       if (JSON.stringify(data).length >= MAX_REQUEST_BYTES) throw new Error('Backup too large');
@@ -192,6 +216,34 @@ window.BridgeBackup = (() => {
       if (field('backupCreateForm')) field('backupCreateForm').onsubmit = event => { event.preventDefault(); create(); };
       if (field('backupPasswordConfirm')) field('backupPasswordConfirm').oninput = () => field('backupPasswordConfirm').setCustomValidity('');
       if (field('backupPassword')) field('backupPassword').oninput = () => field('backupPasswordConfirm').setCustomValidity('');
+      if (field('backupProtect')) field('backupProtect').onchange = () => {
+        field('backupPassword').value = field('backupPasswordConfirm').value = '';
+        field('backupPasswordConfirm').setCustomValidity('');
+        controls();
+      };
+      field('restoreFile').onchange = async () => {
+        const file = field('restoreFile').files?.[0];
+        dropPreview();
+        selectedPlainFile = null;
+        field('restorePassword').value = '';
+        inspectingFile = !!file;
+        controls();
+        if (!file) return;
+        try {
+          const magic = 'HALO-LOCAL-PLAIN\x00\x01';
+          const header = await file.slice(0, magic.length).text();
+          if (field('restoreFile').files?.[0] === file && header === magic) selectedPlainFile = file;
+        } catch {
+          if (field('restoreFile').files?.[0] === file) {
+            field('restoreFile').value = '';
+            inspectingFile = false;
+            controls();
+            message('Could not read the backup file. Select it again.');
+          }
+        } finally {
+          if (field('restoreFile').files?.[0] === file) { inspectingFile = false; controls(); }
+        }
+      };
       field('backupRestoreForm').onsubmit = event => { event.preventDefault(); previewFile(); };
       field('backupRefresh').onclick = () => { clearSecrets(); load(); };
       field('backupReload').onclick = () => location.reload();
