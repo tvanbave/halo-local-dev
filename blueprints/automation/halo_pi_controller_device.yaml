@@ -1,0 +1,256 @@
+blueprint:
+  name: HALO Local Pi - choose a controller
+  description: >-
+    One automation per HALO Local Pi controller: wired keypad (127), battery
+    keypad (126), Accessory/ACC dimmer (91), or Anyplace dimmer (81).
+    Pick a discovered controller by name. No MQTT node or mesh ID is needed.
+    Only its aggregate event entity runs actions; named companion events do not.
+    Assign any Home Assistant actions below; empty actions do nothing.
+    No double-click, hold, release, or toggle gesture is invented.
+    Controller sharing and verified HA-mode assignments must already be set up.
+    This is not the ESP bridge topic format. Disable any older automation for
+    the same controller before enabling a replacement. Wait for the selected
+    controller to show as available after Home Assistant or MQTT reconnects.
+  domain: automation
+  homeassistant:
+    min_version: "2026.9.0"
+  input:
+    connection:
+      name: Controller
+      icon: mdi:remote
+      input:
+        controller_device:
+          name: HALO keypad or dimmer
+          description: Select the device by its Home Assistant name. If it is missing, share it to Home Assistant from HALO Local first.
+          selector:
+            device:
+              filter:
+                - integration: mqtt
+                  model: Wired Scene Keypad
+                - integration: mqtt
+                  model: Battery Scene Keypad
+                - integration: mqtt
+                  model: Accessory Dimmer
+                - integration: mqtt
+                  model: Anyplace Dimmer
+              entity:
+                - integration: mqtt
+                  domain: event
+    buttons:
+      name: Numbered keypad buttons
+      description: >-
+        Only verified or cached numbered activations run these actions. An
+        activation runs its numbered action instead of the companion On action.
+        Other commands expose button_number only when a verified mapping exists.
+        If the keypad On command matches a verified button's target and preset,
+        the bridge cannot distinguish it from numbered activation.
+      icon: mdi:dialpad
+      collapsed: true
+      input:
+        button_1_action:
+          name: Button 1 activated
+          default: []
+          selector:
+            action:
+        button_2_action:
+          name: Button 2 activated
+          default: []
+          selector:
+            action:
+        button_3_action:
+          name: Button 3 activated
+          default: []
+          selector:
+            action:
+        button_4_action:
+          name: Button 4 activated
+          default: []
+          selector:
+            action:
+    power_and_steps:
+      name: On, Off, and real step commands
+      description: >-
+        Keypads support observed On/Off and Raise/Lower commands. For dimmers,
+        endpoint On/Off are used only with the separate-endpoints option below.
+        Raise/Lower here means an explicit step event, not a direction inferred
+        from an absolute brightness report. Use target_id or button_number to
+        route keypad auxiliary commands without keeping guessed button state.
+      icon: mdi:power
+      collapsed: true
+      input:
+        on_action:
+          name: On / full brightness
+          default: []
+          selector:
+            action:
+        off_action:
+          name: "Off"
+          default: []
+          selector:
+            action:
+        raise_action:
+          name: Raise (explicit step)
+          default: []
+          selector:
+            action:
+        lower_action:
+          name: Lower (explicit step)
+          default: []
+          selector:
+            action:
+    absolute_level:
+      name: Absolute level / dimmer slider
+      description: >-
+        brightness is 0..255, brightness_pct is 0..100, and level_fraction is
+        0..1. Use these variables in any action, not just lights. Consecutive
+        reported levels are supported; no release event or repeating loop is created.
+      icon: mdi:tune-vertical
+      collapsed: true
+      input:
+        dimmer_endpoints:
+          name: Dimmer endpoints
+          default: brightness
+          selector:
+            select:
+              options:
+                - label: Send all levels, including 0 and 255, to the absolute-level action
+                  value: brightness
+                - label: Use Off at 0 and On at 255; absolute-level action for 1..254
+                  value: separate
+        brightness_action:
+          name: Absolute level changed
+          default: []
+          selector:
+            action:
+    execution:
+      name: Execution
+      collapsed: true
+      input:
+        allowed_targets:
+          name: Optional mesh target allowlist
+          description: >-
+            A YAML list of decimal target IDs, for example [12345]. Leave [] to
+            accept this controller's supported events for any target. Prefer the
+            controller's dedicated empty HA targets. A nonempty list also rejects
+            local-level reports that have no target. This is not a list of HA entities.
+          default: []
+          selector:
+            object:
+        run_mode:
+          name: Overlapping action sequences
+          description: >-
+            Queued preserves keypad presses. Restart makes the newest dimmer
+            level win, but cancels a previous unfinished action sequence. Keep
+            slider actions short; long delays create lag. Maximum 25 queued runs.
+          default: queued
+          selector:
+            select:
+              options:
+                - queued
+                - restart
+
+triggers:
+  - trigger: event.received
+    target:
+      device_id: !input controller_device
+    options:
+      event_type:
+        - "on"
+        - "off"
+        - brightness
+        - raise
+        - lower
+
+variables:
+  controller_device: !input controller_device
+  controller_kind: >-
+    {% set model = device_attr(controller_device, 'model') %}
+    {% if model in ['Wired Scene Keypad', 'Battery Scene Keypad'] %}keypad
+    {% elif model in ['Accessory Dimmer', 'Anyplace Dimmer'] %}dimmer
+    {% else %}ignore{% endif %}
+  allowed_targets: !input allowed_targets
+  dimmer_endpoints: !input dimmer_endpoints
+  event_data: "{{ (dict(trigger.to_state.attributes) | to_json | from_json) if trigger is defined and trigger.to_state is defined and trigger.to_state is not none else {} }}"
+  source_id: "{{ event_data.get('source', -1) }}"
+  target_id: "{{ event_data.get('target', -1) }}"
+  event_type: "{{ event_data.get('event_type', '') }}"
+  brightness: "{{ event_data.get('brightness', -1) }}"
+  brightness_valid: "{{ event_data.get('brightness') is integer and 0 <= event_data.get('brightness') <= 255 }}"
+  brightness_pct: "{{ ((brightness * 100 + 127) // 255) if brightness is integer and 0 <= brightness <= 255 else -1 }}"
+  level_fraction: "{{ (brightness / 255) if brightness is integer and 0 <= brightness <= 255 else -1 }}"
+  delta: "{{ event_data.get('delta', 0) }}"
+  sequence: "{{ event_data.get('sequence', -1) }}"
+  button_number: >-
+    {% set b = event_data.get('button', 0) %}
+    {{ b if controller_kind == 'keypad' and b is integer and 1 <= b <= 4
+       and event_data.get('button_mapping') in ['verified_table', 'cached_table'] else 0 }}
+  routed_action: >-
+    {% set level_ok = brightness_valid %}
+    {% if controller_kind == 'keypad' and event_data.get('activation') == true %}
+      {{ 'button_' ~ button_number if button_number in [1, 2, 3, 4] and level_ok else 'ignore' }}
+    {% elif controller_kind == 'dimmer' and level_ok and event_type in ['on', 'off', 'brightness'] %}
+      {% if dimmer_endpoints == 'separate' and brightness == 0 %}off
+      {% elif dimmer_endpoints == 'separate' and brightness == 255 %}on
+      {% else %}brightness{% endif %}
+    {% elif event_type == 'brightness' and level_ok %}brightness
+    {% elif event_type in ['on', 'off'] and level_ok %}{{ event_type }}
+    {% elif event_type in ['raise', 'lower'] and 'brightness' not in event_data
+            and event_data.get('delta') is integer and ((event_type == 'raise' and delta == 13)
+            or (event_type == 'lower' and delta == -13)) %}{{ event_type }}
+    {% else %}ignore{% endif %}
+
+conditions:
+  - condition: template
+    value_template: >-
+      {% if trigger is not defined or trigger.to_state is not defined
+            or trigger.to_state is none or trigger.from_state is not defined
+            or trigger.from_state is none %}{{ false }}
+      {% else %}
+        {% set state = trigger.to_state %}
+        {% set event_time = as_timestamp(state.state, none) %}
+        {% set change_time = as_timestamp(state.last_changed, none) %}
+        {% set classes = event_data.get('event_types', []) %}
+        {% set ids = device_attr(controller_device, 'identifiers') or [] %}
+        {% set mqtt_ids = ids | selectattr('0', 'eq', 'mqtt') | map(attribute='1') | list %}
+        {% set source_pattern = '^[a-z0-9_]{1,40}_' ~ source_id ~ '$' %}
+        {{ device_id(state.entity_id) == controller_device
+         and classes is sequence and classes is not string
+         and 'mesh_command' in classes and 'brightness' in classes
+         and not event_data.get('restored', false)
+         and trigger.from_state.state not in ['unavailable', state.state]
+         and event_time is not none and change_time is not none
+         and -1 <= change_time - event_time <= 1
+         and event_data.get('source') is integer and 32896 <= source_id <= 65407
+         and (mqtt_ids | select('match', source_pattern) | list | count) > 0
+         and event_data.get('sequence') is integer and 0 <= sequence <= 16777215
+         and controller_kind in ['keypad', 'dimmer']
+         and event_type in ['on', 'off', 'brightness', 'raise', 'lower']
+         and allowed_targets is sequence and allowed_targets is not string and allowed_targets is not mapping
+         and (allowed_targets | length == 0 or (event_data.get('target') is integer and target_id in allowed_targets))
+         and routed_action != 'ignore' }}
+      {% endif %}
+
+actions:
+  - choose:
+      - conditions: "{{ routed_action == 'button_1' }}"
+        sequence: !input button_1_action
+      - conditions: "{{ routed_action == 'button_2' }}"
+        sequence: !input button_2_action
+      - conditions: "{{ routed_action == 'button_3' }}"
+        sequence: !input button_3_action
+      - conditions: "{{ routed_action == 'button_4' }}"
+        sequence: !input button_4_action
+      - conditions: "{{ routed_action == 'on' }}"
+        sequence: !input on_action
+      - conditions: "{{ routed_action == 'off' }}"
+        sequence: !input off_action
+      - conditions: "{{ routed_action == 'raise' }}"
+        sequence: !input raise_action
+      - conditions: "{{ routed_action == 'lower' }}"
+        sequence: !input lower_action
+      - conditions: "{{ routed_action == 'brightness' }}"
+        sequence: !input brightness_action
+
+mode: !input run_mode
+max: 25
+max_exceeded: warning
