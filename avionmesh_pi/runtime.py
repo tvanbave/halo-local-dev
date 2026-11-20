@@ -30,6 +30,21 @@ class _ReplyTimeout(asyncio.TimeoutError):
     """The transport accepted the request, but the reply wait expired."""
 
 
+class _OperationLock(asyncio.Lock):
+    """Identify the task that acquired the radio for controller availability."""
+
+    acquired_by = None
+
+    async def acquire(self):
+        await super().acquire()
+        self.acquired_by = asyncio.current_task()
+        return True
+
+    def release(self):
+        super().release()
+        self.acquired_by = None
+
+
 class Runtime:
     def __init__(self, store, key, transport, node="pi_lab", clock=None):
         self.store, self.key, self.transport = store, key, transport
@@ -40,7 +55,7 @@ class Runtime:
         self.waiters = []
         self.generation = 0
         self.session_observers = []
-        self.operation = asyncio.Lock()
+        self.operation = _OperationLock()
         # A new runtime owns no prior association task/queue. Only a disconnected
         # transport may establish this startup recovery boundary.
         client = getattr(transport, 'client', None)
@@ -399,7 +414,9 @@ class Runtime:
                 self.store.reserve_targets([event.get('target')])
                 self.store.observe_target(event.get('target'),packet.crypto_source)
                 if (device.product_id in (81,91) and 'brightness' in event
-                        and 256 <= event.get('target',0) <= 24575):
+                        and (256 <= event.get('target', 0) <= 24575 or
+                             device.product_id == 91 and event.get('target') in self.core.devices
+                             and self.core.devices[event['target']].product_id in LIGHTS)):
                     previous = self.native_observations.get(packet.crypto_source)
                     generation = previous[0].get('target_generation',0) if previous else 0
                     if previous and previous[0]['target'] != event['target']:
@@ -618,6 +635,13 @@ class Runtime:
         finally:
             pause.cancel()
             await asyncio.gather(pause, return_exceptions=True)
+
+    @property
+    def controller_actions_busy(self):
+        # Operator requests already preempt background reads at HTTP admission.
+        # A waiting operator or a lock acquired by any other task still takes precedence.
+        return bool(self._foreground_requests or (
+            self.operation.locked() and self.operation.acquired_by is not self._background_read_task))
 
     @asynccontextmanager
     async def foreground_request(self, *, timeout=20):

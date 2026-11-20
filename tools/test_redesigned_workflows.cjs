@@ -1844,6 +1844,31 @@ function fixture() {
     assert.equal(s.calls.filter(c=>c.path==='/api/dimmer/configure').length,1);
     assert(!s.calls.some(c=>c.path==='/api/controller/setup'));
   });
+  for (const mobile of [false, true]) {
+    await scenario('imported-accessory-ha-only-' + (mobile ? 'mobile' : 'desktop'), async(p,s)=>{
+      await configuredDimmer(p,s,91,'native');
+      const v=s.snapshot.controllers[0];
+      v.imported_ha_control=true;
+      v.control_configuration={state:'not_configured',configured:false,mode:null,group:null};
+      v.observed_target=null;
+      await p.evaluate(snapshot=>applySnapshot(snapshot),clone(s.snapshot));
+      await p.getByRole('button',{name:'Switch to Home Assistant only'}).click();
+      assert(!await p.getByLabel('Lighting group',{exact:true}).isVisible());
+      assert(!await p.getByRole('button',{name:'Set up direct group'}).count());
+      assert(await p.getByRole('button',{name:'Review change'}).isDisabled());
+      assert(await p.getByRole('button',{name:'Confirm change'}).isDisabled());
+      assert(!s.calls.some(c=>c.path==='/api/dimmer/configure'));
+      v.observed_target={target:270,baseline:{target:270,observed_ms:100,target_generation:1},valid_for_ms:15000};
+      await p.evaluate(snapshot=>applySnapshot(snapshot),clone(s.snapshot));
+      await p.getByRole('button',{name:'Review change'}).click();
+      await p.getByText(/replace native target #270/).waitFor();
+      await p.getByRole('button',{name:'Confirm change'}).click();
+      await p.getByText(/Waiting for the dimmer/).waitFor();
+      assert.deepEqual(s.calls.filter(c=>c.path==='/api/dimmer/configure').map(c=>c.body),
+        [{target:40003,mode:'ha',baseline:v.observed_target.baseline,revision:'b'.repeat(64)}]);
+      assert(!s.calls.some(c=>c.path==='/api/controller/setup' || c.path==='/api/claim'));
+    },mobile);
+  }
   await scenario('configured-accessory-native-to-ha-explicit-observation-acceptance',async(p,s)=>{
     await configuredDimmer(p,s,91,'native');
     await p.getByRole('button',{name:'Change control mode or group',exact:true}).click();

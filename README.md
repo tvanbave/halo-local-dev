@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="Development build 0.5.0.dev78" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev78-orange">
+  <img alt="Development build 0.5.0.dev80" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev80-orange">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
   <img alt="Local control, no cloud login for daily use" src="https://img.shields.io/badge/control-local%2C%20no%20cloud%20login-2c68a8">
   <img alt="Licence LGPL-3.0-only" src="https://img.shields.io/badge/licence-LGPL--3.0--only-blue">
@@ -24,7 +24,7 @@
 
 <p align="center">
   <a href="docs/INSTALL.md"><b>Install on a Raspberry Pi</b></a> ·
-  <a href="https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev78">Download dev78 for 64-bit Raspberry Pi OS</a> ·
+  <a href="https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev80">Download dev80 for 64-bit Raspberry Pi OS</a> ·
   <a href="#what-works-today">What works today</a> ·
   <a href="#hardware-status">Hardware status</a> ·
   <a href="docs/SETUP.md">Setup reference</a> ·
@@ -33,7 +33,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Development build: 0.5.0.dev78.** This build is for experienced testers, not
+> **Development build: 0.5.0.dev80.** This build is for experienced testers, not
 > a one-click replacement for the app. Full hardware parity and unattended recovery
 > are still being tested; read [Hardware status](#hardware-status) before you rely on it.
 > HALO Local is not an official Cooper Lighting or Avi-on product, and it is not
@@ -194,7 +194,7 @@ on real hardware.
 | --- | --- | --- |
 | HALO recessed lights and A19 | Commissioning and local/group/HA control tested | More models and long-term reliability |
 | Wired scene keypad (127) | Four buttons, native and HA events, restart tested | More installations and recovery cases |
-| HIWAC Accessory Dimmer (91) | Native and HA power/held dimming tested | Changing existing targets/modes across devices |
+| HIWAC Accessory Dimmer (91) | Native and HA power/held dimming tested | Changing existing targets/modes across devices. Switching a cloud-imported dimmer to HA-only control has passed offline tests and awaits a physical check. |
 | Battery scene keypad (126) | Four HA mappings and cached events after restart tested | HA automation, longer sleep/wake, fewer setup wakes |
 | HALO Anyplace dimmer (81) | Commissioning and HA power tested | Slider, native mode, sleep/wake and restart |
 

@@ -11,6 +11,7 @@ import math
 
 from .association import uuid_hash
 from .bridge import LIGHTS
+from .cloud_provenance import device_source
 from .errors import OperationNotStarted
 from .keypad_ownership import stored_tables
 from .lifecycle import reload_inventory
@@ -59,6 +60,38 @@ def retained_dimmer_claim(target, product_id, journals, *, retired_claims=(), re
     return claim
 
 
+def imported_dimmer_source(store, target, product, journals):
+    """Only an actual reviewed import may authorize an in-place assignment."""
+    if (product != 91 or str(target) not in store.get('cloud_device_sources', {})
+            or any(j['kind'] == 'claim' and j['target'] == target for j in journals)):
+        return None
+    try:
+        source = device_source(store, target)
+    except ValueError:
+        return None
+    if (source.get('authority_type') == 'reviewed_cloud_inventory' and source.get('product_id') == product
+            and source.get('location_id') and target not in store.get('retired_addresses', [])):
+        return source
+    return None
+
+
+def dimmer_identity(target, product, journals, retired_claims, retired_addresses, cloud_source):
+    if cloud_source is not None:
+        integer(target, 32896, 65407, 'controller')
+        if (product != 91 or target in retired_addresses or cloud_source.get('device_id') != target
+                or cloud_source.get('product_id') != product
+                or any(j['kind'] == 'claim' and j['target'] == target for j in journals)):
+            raise ValueError('Imported dimmer identity changed')
+        return {'cloud_source': cloud_source}
+    claim = retained_dimmer_claim(target, product, journals, retired_claims=retired_claims,
+                                 retired_addresses=retired_addresses)
+    return {'claim': claim['id'], 'claim_receipt': claim}
+
+
+def _matches_identity(detail, identity):
+    return {k: detail[k] for k in ('claim', 'claim_receipt', 'cloud_source') if k in detail} == identity
+
+
 def _forward(sequence, previous):
     return (type(sequence) is int and 0 <= sequence <= 0xffffff and
             (previous is None or type(previous) is int and 0 <= previous <= 0xffffff
@@ -100,11 +133,10 @@ def _private_safe(group, owner, journals, groups, sources=None, bindings=None):
 
 
 def owned_dimmer_targets(target, product_id, journals, groups, *, retired_claims=(),
-                         retired_addresses=(), target_sources=None, bindings=None):
+                         retired_addresses=(), target_sources=None, bindings=None, cloud_source=None):
     """All safely retained private targets, including those left by a native switch."""
     try:
-        claim = retained_dimmer_claim(target, product_id, journals,
-            retired_claims=retired_claims, retired_addresses=retired_addresses)
+        identity = dimmer_identity(target, product_id, journals, retired_claims, retired_addresses, cloud_source)
     except ValueError:
         return {}
     result = {}
@@ -115,32 +147,34 @@ def owned_dimmer_targets(target, product_id, journals, groups, *, retired_claims
         initial = ((journal['kind'] == 'accessory_setup' and product_id == 91)
                    or (journal['kind'] == 'anyplace_setup' and product_id == 81
                        and d.get('product_id') == 81))
-        initial = (initial and d.get('assignment_attempted') is True
-                   and ('claim_receipt' not in d or d['claim_receipt'] == claim)
+        initial = (initial and 'claim' in identity and 'cloud_source' not in d and d.get('claim') == identity['claim']
+                   and d.get('assignment_attempted') is True
+                   and ('claim_receipt' not in d or d['claim_receipt'] == identity['claim_receipt'])
                    and _forward(d.get('observed', {}).get('sequence'),
                        d.get('wake' if product_id == 81 else 'baseline', {}).get('sequence')))
         if initial and type(d.get('wake' if product_id == 81 else 'baseline', {}).get('sequence')) is not int:
             initial = False
         managed = (journal['kind'] == 'dimmer_edit' and d.get('control_schema') == SCHEMA
                    and d.get('mode') == 'ha' and d.get('product_id') == product_id
-                   and d.get('claim_receipt') == claim and d.get('assignment_attempted') is True
+                   and _matches_identity(d, identity) and d.get('assignment_attempted') is True
                    and d.get('assignment_read_back') is False and not d.get('dispatch_not_started')
                    and type(d.get('wake', d.get('before', {})).get('sequence')) is int
                    and _forward(d.get('observed', {}).get('sequence'),
                                 d.get('wake', d.get('before', {})).get('sequence')))
         reservation = d.get('reservation', {})
         group = reservation.get('group_id')
-        if (not (initial or managed) or d.get('claim') != claim['id']
+        if (not (initial or managed)
                 or not _observed(d, target, product_id, group)
                 or not _private_safe(reservation, target, journals, groups, target_sources, bindings)):
             continue
-        result[group] = {'reservation': copy.deepcopy(reservation), 'transaction': journal['id'],
-                         'claim': claim['id'], 'rank': rank}
+        result[group] = {'reservation': copy.deepcopy(reservation), 'transaction': journal['id'], 'rank': rank}
+        if 'claim' in identity:
+            result[group]['claim'] = identity['claim']
     return result
 
 
 def dimmer_control_status(target, product_id, journals, groups, *, retired_claims=(),
-                          retired_addresses=(), target_sources=None, bindings=None):
+                          retired_addresses=(), target_sources=None, bindings=None, cloud_source=None):
     """Latest accepted destination; reports neither physical tests nor readback."""
     result = {'state': 'not_configured', 'configured': False, 'mode': None, 'group': None,
               'transaction': None, 'assignment_read_back': False}
@@ -153,11 +187,12 @@ def dimmer_control_status(target, product_id, journals, groups, *, retired_claim
     if latest['status'] != 'verified':
         return result
     try:
-        claim = retained_dimmer_claim(target, product_id, journals,
-            retired_claims=retired_claims, retired_addresses=retired_addresses)
+        identity = dimmer_identity(target, product_id, journals, retired_claims, retired_addresses, cloud_source)
     except ValueError:
         return result
     d, kind = latest.get('detail', {}), latest['kind']
+    if 'cloud_source' in identity and (kind != 'dimmer_edit' or d.get('control_schema') != SCHEMA or d.get('mode') != 'ha'):
+        return result
     reservation = d.get('reservation', {})
     group = reservation.get('group_id')
     if (type(group) is not int or not 256 <= group <= 24575
@@ -166,7 +201,7 @@ def dimmer_control_status(target, product_id, journals, groups, *, retired_claim
     if kind == 'dimmer_edit' and d.get('control_schema') == SCHEMA:
         mode = d.get('mode')
         if (mode not in ('ha', 'native') or d.get('product_id') != product_id
-                or d.get('claim') != claim['id'] or d.get('claim_receipt') != claim
+                or not _matches_identity(d, identity)
                 or d.get('assignment_attempted') is not True or d.get('assignment_read_back') is not False
                 or d.get('dispatch_not_started')
                 or type(d.get('wake', d.get('before', {})).get('sequence')) is not int
@@ -182,8 +217,7 @@ def dimmer_control_status(target, product_id, journals, groups, *, retired_claim
                 or not _forward(d.get('observed', {}).get('sequence'),
                     d.get('baseline' if kind == 'accessory_native_setup' else 'before', {}).get('sequence'))):
             return result
-        if kind == 'accessory_native_setup' and (product_id != 91 or d.get('claim') != claim['id']
-                or d.get('claim_receipt') != claim or d.get('mode') != 'native'
+        if kind == 'accessory_native_setup' and (product_id != 91 or not _matches_identity(d, identity) or d.get('mode') != 'native'
                 or d.get('assignment_attempted') is not True or d.get('assignment_read_back') is not False):
             return result
     else:
@@ -191,7 +225,7 @@ def dimmer_control_status(target, product_id, journals, groups, *, retired_claim
     if mode == 'ha':
         owned = owned_dimmer_targets(target, product_id, journals, groups,
             retired_claims=retired_claims, retired_addresses=retired_addresses,
-            target_sources=target_sources, bindings=bindings)
+            target_sources=target_sources, bindings=bindings, cloud_source=cloud_source)
         if group not in owned:
             return result
     else:
@@ -206,18 +240,19 @@ class ManagedDimmerConfiguration:
     def __init__(self, editor):
         self.editor, self.runtime = editor, editor.runtime
 
-    def _claim(self, target, product):
+    def _identity(self, target, product):
         r = self.runtime
-        return retained_dimmer_claim(target, product, r.store.journals(),
-            retired_claims=r.store.get('retired_claims', []),
-            retired_addresses=r.store.get('retired_addresses', []))
+        journals = r.store.journals()
+        return dimmer_identity(target, product, journals, r.store.get('retired_claims', []),
+            r.store.get('retired_addresses', []), imported_dimmer_source(r.store, target, product, journals))
 
-    def _owned(self, target, product):
+    def _owned(self, target, product, identity):
         r = self.runtime
         return owned_dimmer_targets(target, product, r.store.journals(), r.store.inventory()['groups'],
             retired_claims=r.store.get('retired_claims', []),
             retired_addresses=r.store.get('retired_addresses', []),
-            target_sources=r.store.get('target_sources', {}), bindings=stored_tables(r.store))
+            target_sources=r.store.get('target_sources', {}), bindings=stored_tables(r.store),
+            cloud_source=identity.get('cloud_source'))
 
     def _members(self, destination):
         r = self.runtime
@@ -237,6 +272,21 @@ class ManagedDimmerConfiguration:
             raise ValueError('Duplicate group member')
         return members
 
+    def _source_group(self, address, imported):
+        r = self.runtime
+        if 256 <= address <= 24575:
+            groups = [g for g in r.store.inventory()['groups'] if g['group_id'] == address]
+            if len(groups) == 1:
+                return groups[0]
+            if not groups and imported and address != 24566 and not any(
+                    address in _referenced_groups(j) for j in r.store.journals()):
+                return None  # HALO may omit this native target from its group list.
+        elif imported and address not in r.store.get('retired_addresses', []):
+            device = r.core.devices.get(address)
+            if device and device.product_id in LIGHTS:
+                return None
+        raise ValueError('Observed source must be a supported native target')
+
     def _plan(self, target, mode, group):
         r = self.runtime
         integer(target, 32896, 65407, 'controller')
@@ -251,7 +301,10 @@ class ManagedDimmerConfiguration:
             raise ValueError('Managed dimmer configuration disabled or inventory incomplete')
         if r.operation.locked() or not r.mesh_ready or not r.transport.ready or r.store.journals(pending=True):
             raise RuntimeError('Mesh busy, offline or reconciliation pending')
-        claim = self._claim(target, product)
+        identity = self._identity(target, product)
+        imported = 'cloud_source' in identity
+        if imported and (mode != 'ha' or not (r.mqtt_enabled and r.mqtt_ready)):
+            raise ValueError('Imported dimmer conversion requires Home Assistant mode and connected MQTT')
         inventory = r.store.inventory()
         devices = [d for d in inventory['devices'] if d['device_id'] == target]
         if len(devices) != 1 or devices[0]['product_id'] != product:
@@ -259,16 +312,13 @@ class ManagedDimmerConfiguration:
         baseline = r.native_observations.get(target)
         if (not baseline or not 0 <= r.clock()-baseline[1] <= 15000
                 or type(baseline[0].get('target')) is not int
-                or not 256 <= baseline[0]['target'] <= 24575
+                or (imported and r.native_sequences.get(target) != baseline[0].get('sequence'))
                 or not _forward(baseline[0].get('sequence'), None)
                 or type(baseline[0].get('target_generation')) is not int):
             raise ValueError('Fresh current native target observation required')
-        sources = [g for g in inventory['groups'] if g['group_id'] == baseline[0]['target']]
-        if len(sources) != 1:
-            raise ValueError('Observed source must be an ordinary known group or an owned HA target')
-        source = sources[0]
-        owned = self._owned(target, product)
-        if source.get('protected') is not False and source['group_id'] not in owned:
+        source = self._source_group(baseline[0]['target'], imported)
+        owned = self._owned(target, product, identity)
+        if source is not None and source.get('protected') is not False and source['group_id'] not in owned:
             raise ValueError('Protected source is not safely owned by this dimmer')
         newly_reserved, members = False, []
         if mode == 'native':
@@ -289,9 +339,9 @@ class ManagedDimmerConfiguration:
             destination = {'group_id': group, 'name': f'HA dimmer target: {target}',
                            'members': [], 'exposed': False, 'protected': True}
             newly_reserved = True
-        if destination['group_id'] == source['group_id']:
+        if destination['group_id'] == baseline[0]['target']:
             raise ValueError('Dimmer already uses this destination')
-        plan = {'target': target, 'product_id': product, 'mode': mode, 'claim_receipt': copy.deepcopy(claim),
+        plan = {'target': target, 'product_id': product, 'mode': mode, **identity,
                 'source_group': copy.deepcopy(source), 'reservation': copy.deepcopy(destination),
                 'destination_members': members, 'new_reservation': newly_reserved,
                 'baseline': {'target': baseline[0]['target'], 'observed_ms': baseline[1],
@@ -305,8 +355,8 @@ class ManagedDimmerConfiguration:
     def preview(self, target, mode, group=None):
         plan, revision = self._plan(target, mode, group)
         return {'target': target, 'mode': mode, 'group': plan['reservation']['group_id'],
-                'source_group': plan['source_group']['group_id'],
-                'source_mode': 'ha' if plan['source_group']['protected'] else 'native',
+                'source_group': plan['baseline']['target'],
+                'source_mode': 'ha' if plan['source_group'] and plan['source_group']['protected'] else 'native',
                 'baseline': plan['baseline'], 'revision': revision,
                 'valid_for_ms': 15000-(self.runtime.clock()-plan['baseline']['observed_ms']),
                 'reuses_ha_target': mode == 'ha' and not plan['new_reservation'],
@@ -316,9 +366,10 @@ class ManagedDimmerConfiguration:
         r = self.runtime
         current = self.editor.receipt(identifier)
         target, product = current['target'], detail['product_id']
+        identity = self._identity(target, product)
         if (current['kind'] != 'dimmer_edit' or current['status'] not in statuses
                 or current['detail'] != detail or detail.get('control_schema') != SCHEMA
-                or self._claim(target, product) != detail['claim_receipt']
+                or not _matches_identity(detail, identity) or ('cloud_source' in identity and detail['mode'] != 'ha')
                 or any(j['id'] != identifier for j in r.store.journals(pending=True))):
             raise ValueError('Dimmer configuration receipt or claim changed')
         rows = [d for d in r.store.inventory()['devices'] if d['device_id'] == target]
@@ -329,15 +380,19 @@ class ManagedDimmerConfiguration:
         if prior != detail['prior'] or _binding_snapshot(r.store) != detail['bindings']:
             raise ValueError('Dimmer history or retained keypad references changed')
         groups = r.store.inventory()['groups']
+        if self._source_group(detail['baseline']['target'], 'cloud_source' in identity) != detail['source_group']:
+            raise ValueError('Reviewed source changed')
         for name in ('source_group', 'reservation'):
             group = detail[name]
+            if group is None and name == 'source_group':
+                continue
             if [g for g in groups if g['group_id'] == group['group_id']] != [group]:
                 raise ValueError('Reviewed dimmer destination changed')
             if group['protected'] and not _private_safe(group, target, r.store.journals(), groups,
                     r.store.get('target_sources', {}), stored_tables(r.store)):
                 raise ValueError('Private target ownership changed')
-        owned = self._owned(target, product)
-        if detail['source_group']['protected'] and detail['source_group']['group_id'] not in owned:
+        owned = self._owned(target, product, identity)
+        if detail['source_group'] and detail['source_group']['protected'] and detail['source_group']['group_id'] not in owned:
             raise ValueError('Protected source is no longer owned')
         if detail['mode'] == 'ha':
             if not detail['new_reservation'] and detail['reservation']['group_id'] not in owned:
@@ -421,7 +476,7 @@ class ManagedDimmerConfiguration:
                     raise ValueError('Dimmer token capacity exhausted')
                 r.store.set('dimmer_token', token)
             detail = copy.deepcopy(plan)
-            detail.update(control_schema=SCHEMA, claim=plan['claim_receipt']['id'], token=token,
+            detail.update(control_schema=SCHEMA, token=token,
                           assignment_read_back=False, assignment_attempted=False)
             data = copy.deepcopy(r.store.inventory())
             if plan['new_reservation']:
@@ -448,8 +503,11 @@ class ManagedDimmerConfiguration:
                     flag = 'anyplace_editor' if plan['product_id'] == 81 else 'dimmer_editor'
                     if r.capabilities.get(flag) is not True or r.capabilities.get('inventory_complete') is not True:
                         raise ValueError('Dimmer configuration capability changed')
+                    if 'cloud_source' in detail and not (r.mqtt_enabled and r.mqtt_ready):
+                        raise ValueError('MQTT disconnected before assignment')
                     latest = r.native_observations.get(target)
-                    if (not latest or latest[0]['target'] != plan['baseline']['target']
+                    if (not latest or ('cloud_source' in detail and latest[0]['sequence'] != r.native_sequences.get(target))
+                            or latest[0]['target'] != plan['baseline']['target']
                             or latest[0].get('target_generation') != plan['baseline']['target_generation']
                             or not 0 <= r.clock()-plan['baseline']['observed_ms'] <= 15000):
                         raise ValueError('Reviewed native target changed or expired')

@@ -76,6 +76,45 @@ class DimmerConfigurationHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get('known_targets'), known)
         await self.assert_no_job()
 
+    async def control_action(self):
+        response = await self.client.get('/api/snapshot', headers=self.headers)
+        self.assertEqual(response.status, 200)
+        controller = next(row for row in (await response.json())['controllers'] if row['device_id'] == 40001)
+        return controller['actions']['configure_control']
+
+    async def test_dimmer_editor_stays_available_during_status_read_and_preview_gets_priority(self):
+        reading = asyncio.Event()
+
+        async def poll_light():
+            async with self.runtime._background_read() as admitted:
+                self.assertTrue(admitted)
+                async with self.runtime.operation:
+                    reading.set()
+                    await self.runtime._foreground_pending.wait()
+
+        poll = asyncio.create_task(poll_light())
+        try:
+            await asyncio.wait_for(reading.wait(), 1)
+            self.assertEqual(await self.control_action(), {'enabled': True, 'reason': 'available'})
+            self.assertEqual((await asyncio.wait_for(self.preview(), 2)).status, 200)
+        finally:
+            poll.cancel()
+            await asyncio.gather(poll, return_exceptions=True)
+        await self.assert_no_job()
+
+    async def test_dimmer_editor_blocks_foreground_reservation_and_unrelated_lock_holder(self):
+        busy = {'enabled': False, 'reason': 'operation_in_progress'}
+        async with self.runtime.foreground_request():
+            self.assertEqual(await self.control_action(), busy)
+        async with self.runtime.operation:
+            self.assertEqual(await self.control_action(), busy)
+            # A background task being scheduled does not make someone else's lock preemptible.
+            async def queued_read():
+                async with self.runtime._background_read():
+                    return await self.control_action()
+            self.assertEqual(await asyncio.create_task(queued_read()), busy)
+        self.assertEqual(await self.control_action(), {'enabled': True, 'reason': 'available'})
+
     async def test_exact_preview_fields_and_mode_specific_group_requirements(self):
         invalid = [[], {}, {'target': 40001}, {'target': True, 'mode': 'ha'},
             {'target': 40002, 'mode': 'ha'}, {'target': 40099, 'mode': 'ha'},

@@ -5,7 +5,7 @@ No transport, storage writes, recovery dispatch, or automatic write retries occu
 """
 from .keypad import snapshot
 from .keypad_ownership import owned_assignments, owned_targets, stored_tables
-from .dimmer_control import dimmer_control_status, retained_dimmer_claim
+from .dimmer_control import dimmer_control_status, dimmer_identity, imported_dimmer_source
 from .anyplace import cancelled_setups_allow_new
 from .accessory import fresh_native_claim
 from .protocol import Packet, decode_controller
@@ -152,7 +152,7 @@ def controller_workflow(device, *, capabilities=None, mesh_ready=False, busy=Fal
                         local_baseline=False, native_observation=None, now=0,
                         mqtt_enabled=False, mqtt_ready=False, retired_claims=(), retired_addresses=(),
                         groups=(), last_event=None, owned_ha=None, target_sources=None, known_targets=(),
-                        dimmer_token=0, bindings=None, cached_mapping=None):
+                        dimmer_token=0, bindings=None, cached_mapping=None, cloud_source=None):
     """Return safe UI data for one inventory device, or None for a non-controller.
 
     ``table`` must come from the live router, not persisted bindings. Native observation
@@ -224,7 +224,8 @@ def controller_workflow(device, *, capabilities=None, mesh_ready=False, busy=Fal
         age = now - when
         generation = event.get('target_generation', 0)
         if (0 <= age <= 15000 and type(event.get('target')) is int
-                and 256 <= event['target'] <= 24575 and type(generation) is int and generation >= 0):
+                and (256 <= event['target'] <= 24575 or cloud_source and 32896 <= event['target'] <= 65407)
+                and type(generation) is int and generation >= 0):
             observed = {'target': event['target'], 'age_ms': age, 'valid_for_ms': 15000 - age,
                         'baseline': {'target': event['target'], 'observed_ms': when,
                                      'target_generation': generation},
@@ -244,13 +245,12 @@ def controller_workflow(device, *, capabilities=None, mesh_ready=False, busy=Fal
     if model in (81, 91):
         control_configuration = dimmer_control_status(target, model, journals, groups,
             retired_claims=retired_claims, retired_addresses=retired_addresses,
-            target_sources=target_sources, bindings=bindings)
+            target_sources=target_sources, bindings=bindings, cloud_source=cloud_source)
         configure_reason = ('model_editor_disabled' if caps.get(native_flag) is not True else
                             'authoritative_inventory_required' if caps.get('inventory_complete') is not True else None)
         if configure_reason is None:
             try:
-                retained_dimmer_claim(target, model, journals, retired_claims=retired_claims,
-                                      retired_addresses=retired_addresses)
+                dimmer_identity(target, model, journals, retired_claims, retired_addresses, cloud_source)
             except ValueError:
                 configure_reason = 'retained_dimmer_claim_required'
         # Opening the form must not race a fifteen-second observation lifetime.
@@ -360,6 +360,7 @@ def controller_workflow(device, *, capabilities=None, mesh_ready=False, busy=Fal
     accepted_native = native_receipts[-1]['id'] if native_receipts and native_receipts[-1]['status'] == 'verified' else None
     return {'device_id': target, 'product_id': model, 'model': MODELS[model],
             'keypad_ha_setup': keypad_ha_setup, 'control_configuration': control_configuration,
+            'imported_ha_control': cloud_source is not None,
             'accessory_ha': accessory_ha_status(target, journals, groups, retired_claims, observed)
             if model == 91 else None,
             'anyplace_ha': anyplace_ha_status(target, journals, groups, retired_claims, observed,
@@ -388,7 +389,8 @@ def controller_workflows(runtime, *, read_only=False):
     inventory = runtime.store.inventory()
     for device in inventory['devices']:
         view = controller_workflow(device, capabilities=runtime.capabilities,
-            mesh_ready=runtime.mesh_ready, busy=runtime.operation.locked(),
+            cloud_source=imported_dimmer_source(runtime.store, device['device_id'], device['product_id'], journals),
+            mesh_ready=runtime.mesh_ready, busy=runtime.controller_actions_busy,
             preview=read_only or getattr(runtime, 'preview_only', False),
             table=router.bindings.get(device['device_id']), journals=journals,
             local_mode=device['device_id'] in router.local_modes,

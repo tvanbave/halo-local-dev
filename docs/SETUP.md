@@ -206,6 +206,14 @@ controller removal. The hardware table in README describes remaining acceptance
 tests. Claim-reset recovery remains disabled by default. Cloud sync is enabled for
 an imported setup; it runs only when requested, not periodically in the background.
 
+### Switch an imported Accessory Dimmer to Home Assistant only
+
+With MQTT connected, open **Controllers**, choose the imported **Accessory Dimmer**, and select **Switch to Home Assistant only**. Tap and release **On** on that dimmer, then choose **Review change**. This first press can still operate its current lights. Check the displayed target and choose **Confirm change**. Tap and release **On** once more when prompted, then accept the observed target in **Settings → Operations**.
+
+The bridge keeps the dimmer paired and directs its commands to a dedicated empty target. Create a Home Assistant automation for its On, Off and brightness events. To check the change, leave that automation disabled, switch the lights off and press On. The lights should stay off while Home Assistant receives the event. Then enable the automation and test again.
+
+If an older import lacks a per-device import record, review and apply the matching inventory in **Settings → Import from Avi-on / HALO Home** first. This workflow is for the wired Accessory Dimmer (model 91).
+
 ## Rooms and lighting groups
 
 Rooms organise the bridge page. Assigning a light or controller to a room does

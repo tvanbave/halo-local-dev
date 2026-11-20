@@ -17,9 +17,12 @@ def retain_cloud_devices(store, devices, location_id):
             continue
         if target in store.get('retired_addresses', []):
             continue
-        sources.setdefault(str(target), {'source':'cloud_import', 'authority_type':'reviewed_cloud_inventory', 'location_id':location_id,
+        reviewed = {'source':'cloud_import', 'authority_type':'reviewed_cloud_inventory', 'location_id':location_id,
             'state_id':store.get('state_id'), 'mesh_fingerprint':store.get('mesh_fingerprint'),
-            'admission_id':admission['id'], 'device_id':target, 'product_id':device['product_id']})
+            'admission_id':admission['id'], 'device_id':target, 'product_id':device['product_id']}
+        saved = sources.get(str(target))
+        if saved is None or saved == dict(reviewed, authority_type='legacy_imported_inventory_owner_selected'):
+            sources[str(target)] = reviewed
     store.set('cloud_device_sources', sources)
 
 

@@ -15,7 +15,7 @@ assert '/site-packages/' in str(root),root
 assert not Path('/app/avionmesh_pi').exists(),'Source checkout shadows installed wheel'
 assert not Path('/wheels').exists(),'Build wheel cache was retained in runtime'
 assert os.getuid()==65532
-assert importlib.metadata.version('avionmesh-pi')==avionmesh_pi.__version__=='0.5.0.dev78'
+assert importlib.metadata.version('avionmesh-pi')==avionmesh_pi.__version__=='0.5.0.dev80'
 modules=[]
 for item in pkgutil.iter_modules(avionmesh_pi.__path__):
     importlib.import_module('avionmesh_pi.'+item.name)

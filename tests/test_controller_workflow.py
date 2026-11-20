@@ -105,7 +105,7 @@ class ControllerWorkflowTests(unittest.TestCase):
                     inventory=lambda: {'devices': devices, 'groups': groups}, get=lambda k, default: default)
                 router = SimpleNamespace(bindings={32900: binding}, local_modes=set(), baselines={})
                 runtime = SimpleNamespace(store=store, core=SimpleNamespace(controllers=router),
-                    capabilities={flag: True}, mesh_ready=True, operation=SimpleNamespace(locked=lambda: False),
+                    capabilities={flag: True}, mesh_ready=True, controller_actions_busy=False,
                     native_observations={}, clock=lambda: 0, mqtt_enabled=False, mqtt_ready=False)
                 view = controller_workflows(runtime)[0]
                 self.assertTrue(view['assignment_read_back'])
@@ -489,7 +489,7 @@ class ControllerWorkflowTests(unittest.TestCase):
         store = SimpleNamespace(journals=lambda: [], inventory=lambda: {'devices': devices}, get=lambda k, default: default)
         router = SimpleNamespace(bindings={}, local_modes=set(), baselines={})
         runtime = SimpleNamespace(store=store, core=SimpleNamespace(controllers=router), capabilities={}, mesh_ready=True,
-            operation=SimpleNamespace(locked=lambda: False), native_observations={}, clock=lambda: 0, mqtt_enabled=False, mqtt_ready=False)
+            controller_actions_busy=False, native_observations={}, clock=lambda: 0, mqtt_enabled=False, mqtt_ready=False)
         result = controller_workflows(runtime, read_only=True)
         self.assertEqual(len(result), 1)
         self.assertFalse(result[0]['actions']['read_assignments']['enabled'])

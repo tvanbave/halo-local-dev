@@ -915,7 +915,7 @@ let accessoryReview = null;
 const ACCESSORY_REASONS = {
   model_setup_disabled:'Accessory Dimmer HA setup is not enabled on this bridge.',
   model_editor_disabled:'Direct dimmer assignment is not enabled on this bridge.',
-  retained_dimmer_claim_required:'This controller needs a verified pairing record from this bridge before its control can be changed.',
+  retained_dimmer_claim_required:'This controller needs a verified pairing record. For a cloud-imported Accessory Dimmer, refresh its matching inventory under Settings → Import from Avi-on / HALO Home.',
   fresh_retained_claim_required:'HA setup requires a newly paired dimmer and can only run once. Review the previous setup in Operations.',
   authoritative_inventory_required:'The bridge needs a complete device inventory before setup.',
   fresh_native_baseline_required:'Press the dimmer to observe its current target before reviewing a direct group change.',
@@ -1158,6 +1158,7 @@ function updateDimmerControlReview() {
   status.textContent = message;
   const previewButton = $('#dimmerControlPreview'), applyButton = $('#dimmerControlApply');
   if (previewButton) previewButton.disabled = r.busy || !current || !dimmerControlReady(r.id, choice.mode) ||
+    (keypadView(r.id)?.imported_ha_control && !(observed?.baseline && observed.valid_for_ms > 0)) ||
     !['native', 'ha'].includes(choice.mode) || choice.mode === 'native' && !lightingGroups().some(g => g.group_id === choice.group && g.members.length);
   if (applyButton) applyButton.disabled = r.busy || !dimmerControlReviewValid(r);
 }
@@ -1169,15 +1170,16 @@ function changeDimmerControlChoice() {
 function openDimmerControl(id) {
   if (!accessoryAllowed(id, 'configure_control')) return;
   const current = keypadView(id)?.control_configuration, model = dev(id).product_type;
-  const mode = current?.mode === 'ha' ? 'ha' : 'native';
+  const imported = keypadView(id)?.imported_ha_control === true;
+  const mode = imported || current?.mode === 'ha' ? 'ha' : 'native';
   const groups = lightingGroups().filter(g => g.members.length).sort((a, b) => a.name.localeCompare(b.name));
   dimmerControlReview = {id, model, instance:S.status.instance, preview:null, busy:false};
   modal(`<h3>Choose what ${esc(dev(id).name)} controls</h3>
-    <label for="dimmerControlMode">Control mode</label><select id="dimmerControlMode" class="inp" onchange="changeDimmerControlChoice()">
+    ${imported ? '<input id="dimmerControlMode" type="hidden" value="ha">' : `<label for="dimmerControlMode">Control mode</label><select id="dimmerControlMode" class="inp" onchange="changeDimmerControlChoice()">
       <option value="native" ${mode === 'native' ? 'selected' : ''}>Direct lighting group</option>
-      <option value="ha" ${mode === 'ha' ? 'selected' : ''}>Home Assistant</option></select>
+      <option value="ha" ${mode === 'ha' ? 'selected' : ''}>Home Assistant</option></select>`}
     <div id="dimmerControlGroupRow"><label for="dimmerControlGroup">Lighting group</label><select id="dimmerControlGroup" class="inp" onchange="changeDimmerControlChoice()"><option value="">Choose a group</option>${groups.map(g => `<option value="${g.group_id}" ${current?.mode === 'native' && current.group === g.group_id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></div>
-    <p>Direct group controls these lights without Home Assistant. Home Assistant control uses a dedicated event target; choose the lights in a Home Assistant automation. Switching to direct control does not disable an existing HA automation.</p>
+    <p>${imported ? 'This replaces the imported dimmer’s lighting target with an empty target. A Home Assistant automation chooses which lights respond to On, Off and brightness.' : 'Direct group controls these lights without Home Assistant. Home Assistant control uses a dedicated event target; choose the lights in a Home Assistant automation. Switching to direct control does not disable an existing HA automation.'}</p>
     <p>Tap On once and release it before reviewing. ${model === 81 ? 'After confirming, press the small Wake-Up button on the bottom once immediately, then tap On once and release.' : 'After confirming, tap On once and release.'} Stop pressing and accept the observed result promptly in Operations.</p>
     <p id="dimmerControlStatus" role="status"></p>
     <p class="hint">A review lasts at most 15 seconds. The bridge checks observed input; stored assignment readback is unavailable. An uncertain write is never repeated automatically.</p>
@@ -1204,6 +1206,7 @@ async function previewDimmerControl() {
       throw Error('The bridge did not return a valid control review.');
     r.preview = result; r.choice = choice; r.deadline = started + Math.min(15000, result.valid_for_ms);
     r.message = choice.mode === 'native' ? `Reviewed: direct control of ${gName(choice.group)}. Confirm now, then test the dimmer.`
+      : keypadView(r.id)?.imported_ha_control ? `This will replace native target #${result.baseline.target} with a dedicated Home Assistant target. Confirm, then tap On once.`
       : 'Reviewed: Home Assistant control. An HA automation is required; this change does not create one.';
   } catch (e) { r.preview = null; r.message = 'No change sent. ' + e.message + ' Tap On once and review again when ready.'; }
   finally { r.busy = false; if (dimmerControlReview === r) updateDimmerControlReview(); }
@@ -1219,19 +1222,23 @@ function dimmerControlDetails(d, v) {
   const id = d.avion_id, current = v.control_configuration, request = accessoryRequests.get(id);
   const phase = d.product_type === 81 ? anyplacePhaseText(id) : '';
   const setupPrompt = d.product_type === 91 ? accessorySetupPrompt(id) : '';
+  const imported = v.imported_ha_control === true;
+  const differentTarget = imported && current.configured && v.observed_target && v.observed_target.target !== current.group;
   const status = current.state === 'needs_review' ? `<p>A control change needs review before another change.</p>${opsReviewButton(current.transaction)}`
+    : differentTarget ? `<p>The last accepted mode was Home Assistant. This dimmer just sent a command to target #${esc(v.observed_target.target)}.</p>`
     : current.configured && current.mode === 'native' ? `<p><strong>Direct group control: ${esc(gName(current.group))}</strong></p><p>On, Off and brightness control this group without Home Assistant.</p>`
     : current.configured && current.mode === 'ha' ? '<p><strong>Home Assistant control</strong></p><p>This dimmer sends events to its dedicated HA target. Its Home Assistant automation chooses the lights; MQTT and HA must be running.</p>'
+    : imported ? '<p>This dimmer was imported from HALO Home. Switching to Home Assistant replaces its native lighting target.</p>'
     : '<p>No accepted control assignment is recorded yet.</p>';
-  const fresh = !current.configured && current.state !== 'needs_review';
+  const fresh = !imported && !current.configured && current.state !== 'needs_review';
   return `<div class="sec"><h4>${d.product_type === 81 ? 'Anyplace dimmer' : 'Accessory Dimmer'} control</h4>${d.product_type === 91 ? `<div data-accessory-progress-host="${id}">${setupPrompt}</div>` : ''}${status}
     ${fresh ? `<div class="row">${d.product_type === 91 ? `<button class="btn" onclick="openAccessoryNativeSetup(${id})" ${accessoryAllowed(id,'setup_native') ? '' : 'disabled'}>Set up direct group</button>` : ''}
       <button class="btn" onclick="${d.product_type === 81 ? 'openAnyplaceSetup' : 'openAccessorySetup'}(${id})" ${accessoryAllowed(id,'setup_ha') ? '' : 'disabled'}>Set up Home Assistant control</button></div>` : ''}
-    <button class="btn primary" onclick="openDimmerControl(${id})" ${accessoryAllowed(id,'configure_control') ? '' : 'disabled'}>${current.configured ? 'Change control mode or group' : 'Choose control from observed input'}</button>
+    ${imported && current.configured && !differentTarget ? '' : `<button class="btn primary" onclick="openDimmerControl(${id})" ${accessoryAllowed(id,'configure_control') ? '' : 'disabled'}>${imported ? 'Switch to Home Assistant only' : current.configured ? 'Change control mode or group' : 'Choose control from observed input'}</button>`}
     ${v.actions?.configure_control?.enabled !== true ? `<p class="hint">${esc(ACCESSORY_REASONS[v.actions?.configure_control?.reason] || 'Control editing is not available for this controller yet.')}</p>` : ''}
     ${phase ? `<p role="status">${esc(phase)}</p>` : ''}
     ${request && !(request.pending && setupPrompt) ? `<p role="status">${esc(request.message)}</p>${request.review ? opsReviewButton(request.transaction) : ''}` : ''}
-    <p class="hint">${setupPrompt ? 'Follow the setup instructions above. Stored assignment readback is unavailable.' : 'After a change, tap On once and release. Stop pressing and accept the observed target promptly in Operations, then test On, Off and dimming. Stored assignment readback is unavailable.'}</p></div>`;
+    <p class="hint">${imported && current.configured && !differentTarget ? 'Test On, Off and dimming with your Home Assistant automation.' : setupPrompt ? 'Follow the setup instructions above. Stored assignment readback is unavailable.' : 'After a change, tap On once and release. Stop pressing and accept the observed target promptly in Operations, then test On, Off and dimming. Stored assignment readback is unavailable.'}</p></div>`;
 }
 
 function accessoryDetails(d, v) {
