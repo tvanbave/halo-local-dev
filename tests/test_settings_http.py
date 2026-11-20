@@ -34,6 +34,28 @@ class SettingsHttpTests(unittest.IsolatedAsyncioTestCase):
         await self.manager.close()
         await http.HttpTests.asyncTearDown(self)
 
+    async def test_software_update_check_install_and_read_only_guards(self):
+        base = '/api/settings/update'
+        response = await self.client.post(base + '/check', json={})
+        self.assertEqual(response.status, 401)
+        with patch('avionmesh_pi.release_update.latest_release', return_value='9.0.0.dev1') as lookup:
+            response = await self.client.get(base, headers=self.headers)
+            self.assertIsNone((await response.json())['latest'])
+            lookup.assert_not_called()
+            response = await self.client.post(base+'/check', headers=self.headers, json={})
+            self.assertTrue((await response.json())['available'])
+            response = await self.client.post(base+'/install', headers=self.headers, json={'version':'9.0.0.dev1'})
+            self.assertEqual(response.status, 400)
+            with patch.object(self.store, 'journals', return_value=[{'kind':'claim'}]):
+                response = await self.client.post(base+'/install', headers=self.headers,
+                    json={'version':'9.0.0.dev1', 'confirm_restart':True})
+                self.assertEqual(response.status, 409)
+                self.assertIn('operation', (await response.json())['message'])
+            preview = http.TestClient(http.TestServer(http.create_app(self.runtime, self.token, read_only=True)))
+            async with preview:
+                self.assertEqual((await preview.post(base+'/install', headers=self.headers, json={})).status, 403)
+            lookup.assert_called_once()
+
     async def get_settings(self):
         response = await self.client.get('/api/settings/mqtt', headers=self.headers)
         self.assertEqual(response.status, 200)

@@ -93,6 +93,7 @@ def lan_address(override=None):
 def check_bind(host, port):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
     except OSError:
         raise SetupError('Cannot bind the bridge address/port. Stop another bridge using it, or set HALO_HOST and HALO_PORT.') from None

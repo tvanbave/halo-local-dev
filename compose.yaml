@@ -26,6 +26,7 @@ services:
       HALO_ADAPTER: ${HALO_ADAPTER:-hci0}
     volumes:
       - halo-data:/data
+      - /run/halo-local-update:/run/halo-local-update:ro
       - type: bind
         source: /run/dbus/system_bus_socket
         target: /run/dbus/system_bus_socket

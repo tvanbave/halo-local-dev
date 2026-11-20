@@ -336,6 +336,8 @@ the Pi's DHCP address for predictable access. Both bundled services use the same
 
 ## Stop, update and preserve state
 
+For updates from the browser, enable the Pi updater once and open **Settings → Bridge updates**. See [Update from Settings](INSTALL.md#update-from-settings).
+
 Follow the [update and rollback procedure](INSTALL.md#update) using the Compose selection you installed. The running bridge stays available while the replacement images build.
 
 Before an update, download a full `.halobackup` from **Settings → Backup & restore**

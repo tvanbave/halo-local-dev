@@ -133,7 +133,7 @@ UID_MAX 60000 range". That is expected. Nothing needs restarting.
 
 ## 6. Download and start HALO Local
 
-For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt dev80 image and commands](https://github.com/tvanbave/halo-local-dev/releases/tag/v0.5.0-dev80). To build from source, continue below.
+For a fresh installation on 64-bit Raspberry Pi OS, you can skip the image build. Follow steps 1–5 above, then use the [prebuilt Pi images and commands](https://github.com/tvanbave/halo-local-dev/releases). To build from source, continue below.
 
 ```sh
 git clone https://github.com/tvanbave/halo-local-dev.git halo-local
@@ -199,6 +199,24 @@ Run these from the `halo-local` folder on the Pi.
 The bridge starts by itself when the Pi boots.
 
 ### Update
+
+#### Update from Settings
+
+On a 64-bit Pi running the public dev build, open **Settings → Bridge updates → Check for updates**. The check includes published development releases with a Pi image. It contacts GitHub only when requested and shows the installed and available versions.
+
+Install the first build that includes Bridge updates using the manual steps below and its updated Compose file. To enable the Install button, run this once from that checkout as the user who runs Docker:
+
+```sh
+sh tools/enable-updates.sh
+```
+
+For the bundled Bluetooth stack use `sh tools/enable-updates.sh compose.bluetooth.yaml`. The command registers a local Pi service and may ask for your Pi password. Docker access stays on the Pi side of a local socket. Anyone with access to bridge Settings under your current login or trusted-LAN configuration can then request an update.
+
+Choose **Update to …**, review the version, then choose **Install and restart**. The Pi checks the download against the release checksum. The current bridge stays up during download. Finish any open device operations before the restart. You can close the page and reopen Bridge updates to see progress. The Pi keeps the existing data volume, checks the new bridge’s health and running version, and restores the previous image if startup fails. The updater fast-forwards the existing public checkout to the release and restores its prior revision during rollback. A custom Compose stack or local source edits require a manual update.
+
+If Settings says rollback needs review, check `git status` first. With a clean checkout, `git switch --detach refs/halo-local/previous` selects the saved previous source. To restore its image, run `docker image tag halo-rollback-bridge:previous halo-local:local` and `docker compose up -d --no-deps --no-build --pull never --wait bridge` from the original checkout. For bundled Bluetooth use `docker compose -f compose.bluetooth.yaml` in that command. Verify the restored version in Settings. After confirming the bridge is healthy, archive the updater result with `sudo mv /var/lib/halo-local-update/status.json /var/lib/halo-local-update/last-reviewed.json`. The updater journal is available with `sudo journalctl -u 'halo-local-update@*' -n 50`.
+
+#### Manual update
 
 Download a full backup, resolve unfinished operations and use the same Compose file as your running installation. For the optional bundled Bluetooth stack, first set `export COMPOSE_FILE=compose.bluetooth.yaml` in the terminal. Run the following block from the checkout:
 

@@ -37,6 +37,7 @@ from .mqtt_settings import SettingsError
 from .ui import HTML, management_html
 from .bridge import CONTROLLERS, LIGHTS, COLOR_LIGHTS
 from . import __version__
+from .settings_update import BridgeUpdates, UpdateRequestError
 from .backup_manager import BackupManagerError, MAX_HTTP_BYTES
 from .installation_backup import InstallationBackupError
 from .restore_state import RestoreStateError
@@ -148,8 +149,22 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
     scene_job = None
     instance = uuid.uuid4().hex
 
+    active_writes = 0
+
+    def update_busy(*, own_request=False):
+        operation = runtime.operation
+        return (active_writes > 0 or getattr(runtime, 'maintenance', False)
+                or runtime._foreground_requests > int(own_request)
+                or (operation.locked() and operation.acquired_by is not runtime._background_read_task)
+                or any(not task.done() for task in jobs.values())
+                or (scene_task is not None and not scene_task.done())
+                or runtime.diagnostics.active() or bool(runtime.store.journals(pending=True)))
+
+    updates = BridgeUpdates(runtime, update_busy)
+
     @web.middleware
     async def guard(request, handler):
+        nonlocal active_writes
         if trusted_lan_no_auth or browser_login:
             # Validate every route, including the HTML and read-only endpoints.
             # Do not trust forwarded host headers or DNS aliases in this mode.
@@ -184,6 +199,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
                 if origin and origin != str(request.url.origin()):
                     return web.json_response({"error": "invalid_origin"}, status=403)
         if request.method == 'POST' and getattr(runtime, 'maintenance', False):
+            if updates.restarting:
+                return web.json_response({'error': 'update_in_progress', 'message': 'The bridge is restarting for its software update.'}, status=409)
             return web.json_response({'error':'restore_in_progress','message':'The bridge is restarting after restore. Reload shortly.'}, status=409)
         if request.path != '/api/backup/preview':
             request._client_max_size = 256 * 1024
@@ -194,10 +211,14 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
                 return web.json_response({"error": "json_required"}, status=415)
         if request.method == 'POST' and request.path in ('/api/control', '/api/scenes/activate', '/api/scenes/activate-keypad-test', '/api/scenes/activate-quiet-test'):
             request[RECEIVED_MS_KEY] = runtime.clock()
+        update_route = request.path.startswith('/api/settings/update')
+        write = request.method == 'POST' and not update_route
+        if write:
+            active_writes += 1
         try:
             # Pause convenience reads while an owner request waits for the
             # current read and runs once. Diagnostics remain usable meanwhile.
-            if request.method == 'POST' and request.path not in ('/api/capture', '/api/capture/action',
+            if write and request.path not in ('/api/capture', '/api/capture/action',
                     '/api/settings/mqtt', '/api/settings/mqtt/test',
                     '/api/cloud-import/preview', '/api/cloud-import/apply'):
                 reviewed_inventory = (runtime.store.inventory() if request.path in
@@ -210,6 +231,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
                 response = await handler(request)
         except (BackupManagerError, InstallationBackupError, RestoreStateError) as error:
             response = web.json_response({'error': error.code, 'message': str(error)}, status=getattr(error, 'status', 400))
+        except UpdateRequestError as error:
+            response = web.json_response({'error': 'update_unavailable', 'message': str(error)}, status=error.status)
         except (SettingsError, CloudImportError) as error:
             response = web.json_response({'error': error.code, 'message': str(error)}, status=error.status)
         except OperationNotStarted as error:
@@ -226,6 +249,9 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
             response = web.json_response({"error": "timeout_outcome_unknown"}, status=504)
         except RuntimeError:
             response = web.json_response({"error": "operation_unavailable_or_uncertain"}, status=409)
+        finally:
+            if write:
+                active_writes -= 1
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -254,7 +280,7 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
     async def capabilities(request):
         caps = status_snapshot().get('capabilities', {})
         return web.json_response({'bridge': 'pi-avionmesh', 'version': __version__, 'instance': instance,
-            'features': {'control': caps.get('light_control') is True, 'group_control': caps.get('group_control') is True,
+            'features': {'software_updates': not read_only, 'control': caps.get('light_control') is True, 'group_control': caps.get('group_control') is True,
                          'read_states': caps.get('light_control') is True, 'flash': caps.get('light_control') is True,
                          'pair_lights': caps.get('claim') is True and runtime.capabilities.get('ordinary_claim') is True,
                          'detect_type': True, 'labels': True, 'group_metadata': not read_only,
@@ -1226,10 +1252,23 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
         data = await request.json()
         return web.json_response(await getattr(manager, action)(data))
 
+    async def software_update(request):
+        if read_only:
+            raise UpdateRequestError('Software updates are unavailable in preview.', 403)
+        if request.method == 'GET':
+            return web.json_response(await updates.status())
+        data = await request.json()
+        if request.match_info['action'] == 'check':
+            if data != {}:
+                raise ValueError('Unexpected update check fields')
+            return web.json_response(await updates.check())
+        return web.json_response(await updates.install(data), status=202)
+
     async def unsupported(request):
         return web.json_response({"error": "not_implemented", "operation": request.match_info["operation"]}, status=501)
 
     async def shutdown(app):
+        await updates.close()
         tasks=list(jobs.values())+list(streams)
         if scene_task is not None:
             tasks.append(scene_task)
@@ -1245,6 +1284,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
         web.post('/api/backup/{action:create|preview|restore}', backup_action),
         web.get("/api/scenes", scenes_view), web.post("/api/scenes/{action:create|edit|remove|activate|activate-keypad-test|activate-quiet-test|recover|resume|verify|exposure|set-aside|forget}", scenes_action),
         web.get("/api/capabilities", capabilities), web.post("/api/device-rooms", set_device_rooms),
+        web.get('/api/settings/update', software_update),
+        web.post('/api/settings/update/{action:check|install}', software_update),
         web.get('/api/settings/mqtt', mqtt_settings_view), web.post('/api/settings/mqtt', mqtt_settings_save),
         web.post('/api/settings/mqtt/test', mqtt_settings_test),
         web.post('/api/cloud-import/preview', cloud_import_preview), web.post('/api/cloud-import/apply', cloud_import_apply),

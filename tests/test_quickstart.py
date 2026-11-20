@@ -209,6 +209,20 @@ class AddressTests(unittest.TestCase):
     def test_public_wildcard_loopback_and_hostname_are_not_accepted(self):
         for value in ('0.0.0.0','8.8.8.8','127.0.0.1','bridge.local','::1'):
             with self.subTest(value=value),self.assertRaises(q.SetupError):q.lan_address(value)
+    def test_restart_reuses_recent_http_port_but_refuses_an_active_listener(self):
+        with q.socket.socket() as listener:
+            listener.setsockopt(q.socket.SOL_SOCKET, q.socket.SO_REUSEADDR, 1)
+            listener.bind(('127.0.0.1', 0))
+            address = listener.getsockname()
+            listener.listen()
+            with self.assertRaises(q.SetupError):
+                q.check_bind(*address)
+            with q.socket.create_connection(address, timeout=2) as client:
+                conn, _ = listener.accept()
+                conn.close()
+                self.assertEqual(client.recv(1), b'')
+        q.check_bind(*address)
+
     def test_occupied_port_is_reported_before_installation(self):
         with patch.object(q.socket,'socket') as sock:
             sock.return_value.__enter__.return_value.bind.side_effect=OSError('busy')

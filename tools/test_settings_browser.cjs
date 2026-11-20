@@ -21,7 +21,7 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
    let body;try{body=req.postDataJSON();}catch{}s.calls.push({path:u.pathname,method:req.method(),body});
    const send=(value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
    const handler=s.handlers[req.method()+' '+u.pathname];if(handler)return handler({body,send,route});
-   if(u.pathname==='/api/capabilities')return send({version:'0.5.0.dev16',features:{control:true,labels:true,group_metadata:true,mqtt_settings:true,cloud_import:true},types:{lights:{93:'RL4'},controllers:{},color_temp:[93]}});
+   if(u.pathname==='/api/capabilities')return send({version:'0.5.0.dev16',features:{software_updates:true,control:true,labels:true,group_metadata:true,mqtt_settings:true,cloud_import:true},types:{lights:{93:'RL4'},controllers:{},color_temp:[93]}});
    if(u.pathname==='/api/snapshot')return send(s.snapshot);
    if(u.pathname==='/api/events')return route.fulfill({contentType:'text/event-stream',body:''});
    if(u.pathname==='/api/settings/mqtt'&&req.method()==='GET')return send(s.mqtt);
@@ -95,5 +95,28 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
  await scenario('settings-mobile-and-cloud-name-escaping',async(p,s)=>{
   s.handlers['POST /api/cloud-import/preview']=({send})=>{const data=ready();data.selected_location.name='<img src=x onerror=alert(1)>';data.changes.devices_added[0].name='<script>window.injected=true</script>';return send(data);};await preview(p);assert.equal(await p.evaluate(()=>window.injected),undefined);assert.equal(await p.locator('#cloudReview script, #cloudReview img').count(),0);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await p.screenshot({path:path.join(evidence,'settings-mobile.png'),fullPage:true});
  },true);
+ for (const mobile of [false,true]) await scenario('bridge update confirmation and recovery '+(mobile?'mobile':'desktop'),async(p,s)=>{
+  const path='/api/settings/update', installed='0.5.0.dev81', latest='0.5.0.dev82';
+  let state={installed,latest:null,job:{phase:'unavailable'},available:false}, writes=0;
+  s.handlers['GET '+path]=({send})=>send(state);
+  s.handlers['POST '+path+'/check']=({body,send})=>{
+   assert.deepEqual(body,{});state={installed,latest,available:true,job:{phase:'idle'}};return send(state);
+  };
+  s.handlers['POST '+path+'/install']=({body,send})=>{
+   assert.deepEqual(body,{version:latest,confirm_restart:true});writes++;
+   state.job={phase:'preparing',message:'Downloading and verifying the release.'};return send(state,202);
+  };
+  await p.locator('#bridgeUpdatePanel summary').click();
+  await p.locator('#updateSetup').waitFor();
+  await p.getByRole('button',{name:'Check for updates'}).click();
+  const offer=p.getByRole('button',{name:'Update to '+latest});
+  await offer.click();await p.locator('#updateCancel').click();assert.equal(writes,0);
+  await offer.click();await p.getByRole('button',{name:'Install and restart'}).click();
+  await p.waitForFunction(()=>document.querySelector('#updateResult').textContent.includes('Downloading'));
+  assert.equal(writes,1);
+  state.job={phase:'rolled_back',message:'The previous bridge version is running again.'};
+  await p.waitForFunction(()=>document.querySelector('#updateResult').textContent.includes('previous bridge version'),null,{timeout:8000});
+  assert.equal(writes,1);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ },mobile);
  await browser.close();fs.writeFileSync(path.join(evidence,'browser.json'),JSON.stringify({results,errors},null,2)+'\n');console.log(JSON.stringify({passed:results.filter(r=>r.passed).length,total:results.length,errors}));if(results.some(r=>!r.passed)||errors.length){console.log(JSON.stringify(results.filter(r=>!r.passed),null,2));process.exitCode=1;}
 })().catch(e=>{console.error(e);process.exitCode=1;});

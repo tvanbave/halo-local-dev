@@ -52,6 +52,16 @@ window.BridgeSettings = (() => {
       <p id="cloudResult" role="status" aria-live="polite"></p>
       <div id="cloudReview"></div>
     </details>
+    <details class="card settings-disclosure" data-settings-panel="updates" id="bridgeUpdatePanel" hidden>
+      <summary>Bridge updates</summary>
+      <p id="updateVersions"></p><p id="updateNotes" hidden><a target="_blank" rel="noopener noreferrer">View release notes on GitHub</a></p><p role="status" aria-live="polite" id="updateResult"></p>
+      <p id="updateSetup" class="hint" hidden>To enable installation, run <code>sh tools/enable-updates.sh</code> once in the bridge folder on the Pi. For the bundled Bluetooth stack, append <code>compose.bluetooth.yaml</code>.</p>
+      <div class="row"><button class="btn" id="updateCheck" type="button">Check for updates</button>
+      <button class="btn primary" id="updateInstall" type="button" hidden>Update bridge</button></div>
+      <div id="updateConfirm" hidden><p id="updatePrompt"></p><div class="row">
+      <button class="btn" id="updateCancel" type="button">Cancel</button>
+      <button class="btn primary" id="updateProceed" type="button">Install and restart</button></div></div>
+    </details>
     <details class="card settings-disclosure" data-settings-panel="backup" hidden><summary>Backup &amp; restore</summary><div id="backupSettingsMount"></div></details>`;
     return element;
   }
@@ -192,11 +202,72 @@ window.BridgeSettings = (() => {
       discardPreview(); message('cloudResult', failure(error, 'The import response was not confirmed. Refresh the inventory and request a new preview before another change. Nothing is retried automatically.'));
     } finally { busyCloud(false); }
   }
+  let updateState = null, updateTimer = null, updateBusy = false, reviewedVersion = null;
+  const updating = phase => ['preparing','ready','installing','rolling_back'].includes(phase);
+  const updateVisible = () => panel?.isConnected && field('bridgeUpdatePanel')?.open;
+  function drawUpdate(value) {
+    if (typeof value?.installed !== 'string' || typeof value.job?.phase !== 'string') throw new Error('Waiting for bridge update status.');
+    updateState = value;
+    const job = value.job || {}, active = updating(job.phase);
+    message('updateVersions', 'Installed ' + value.installed + (value.latest ? ' · Latest ' + value.latest : ''));
+    const notes = field('updateNotes');
+    notes.hidden = !value.latest;
+    if (value.latest) notes.querySelector('a').href = 'https://github.com/tvanbave/halo-local-dev/releases/tag/v' + encodeURIComponent(value.latest.replace('.dev','-dev'));
+    const checked = value.latest && !value.available ? (value.latest === value.installed ? 'Your bridge is up to date.' : 'Your installed build is newer than the public release.') : '';
+    message('updateResult', job.message || checked || (value.available ? 'A newer public build is available.' : 'Check GitHub for a public build.'));
+    field('updateSetup').hidden = job.phase !== 'unavailable';
+    field('updateCheck').disabled = active;
+    field('updateInstall').hidden = !value.available || active || ['needs_review','unavailable'].includes(job.phase);
+    field('updateInstall').textContent = 'Update to ' + (value.latest || 'latest');
+    if (active || reviewedVersion !== value.latest) cancelUpdate();
+    if (active) scheduleUpdate();
+  }
+  function cancelUpdate() { reviewedVersion = null; field('updateConfirm').hidden = true; }
+  function scheduleUpdate() {
+    clearTimeout(updateTimer);
+    if (updateVisible()) updateTimer = setTimeout(() => updateRequest('status'), 4000);
+  }
+  async function updateRequest(action) {
+    if (updateBusy) return;
+    updateBusy = true;
+    clearTimeout(updateTimer);
+    const version = reviewedVersion;
+    cancelUpdate();
+    field('updateCheck').disabled = field('updateInstall').disabled = true;
+    if (action !== 'status') message('updateResult', action === 'check' ? 'Checking GitHub…' : 'Starting the update…');
+    try {
+      const base = '/api/settings/update';
+      const value = action === 'status' ? await api(base) : await api(base + '/' + action,
+        action === 'check' ? {} : {version, confirm_restart:true});
+      drawUpdate(value);
+    } catch (error) {
+      const reconnect = action !== 'check' && !error.status;
+      message('updateResult', reconnect ? 'Waiting to reconnect to the bridge…' : error.message || 'Could not reach the bridge.');
+      field('updateInstall').hidden = true;
+      field('updateCheck').disabled = false;
+      if (reconnect || action === 'install') scheduleUpdate();
+    } finally {
+      updateBusy = false;
+      field('updateInstall').disabled = false;
+    }
+  }
   function activate() {
     const mount = document.getElementById('bridgeSettingsMount');
-    if (!mount) { clearSecrets(); return; }
+    if (!mount) { clearSecrets(); clearTimeout(updateTimer); return; }
     if (!panel) {
       panel = build();
+      field('bridgeUpdatePanel').ontoggle = () => {
+        if (updateVisible()) updateRequest('status');
+        else { cancelUpdate(); clearTimeout(updateTimer); }
+      };
+      field('updateCheck').onclick = () => updateRequest('check');
+      field('updateInstall').onclick = () => {
+        reviewedVersion = updateState.latest;
+        message('updatePrompt', 'Install ' + reviewedVersion + '? The bridge will restart briefly. Your pairings and settings are kept.');
+        field('updateConfirm').hidden = false;
+      };
+      field('updateCancel').onclick = cancelUpdate;
+      field('updateProceed').onclick = () => { if (reviewedVersion) updateRequest('install'); };
       const backupDisclosure = field('backupSettingsMount')?.parentElement;
       if (backupDisclosure) backupDisclosure.addEventListener('toggle', () => {
         if (!backupDisclosure.open && !window.BridgeBackup?.isBusy()) window.BridgeBackup?.discardDraft?.();
@@ -209,7 +280,11 @@ window.BridgeSettings = (() => {
       field('mqttTls').onchange = () => { const current = Number(field('mqttPort').value); if ([1883,8883].includes(current)) field('mqttPort').value = field('mqttTls').checked ? 8883 : 1883; updateTls(); };
       field('cloudForm').onsubmit = event => { event.preventDefault(); previewCloud(); };
     }
-    if (panel.parentNode !== mount) mount.replaceChildren(panel);
+    if (panel.parentNode !== mount) {
+      mount.replaceChildren(panel);
+      if (updateVisible()) updateRequest('status');
+    }
+    field('bridgeUpdatePanel').hidden = typeof feat !== 'function' || !feat('software_updates');
     const backupMount = field('backupSettingsMount');
     if (backupMount?.parentElement) backupMount.parentElement.hidden = typeof feat !== 'function' || !feat('backup');
     if (!mqtt && !loading && !initialLoadAttempted) { initialLoadAttempted = true; loadMqtt(); }
