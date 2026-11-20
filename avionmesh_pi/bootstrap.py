@@ -1,6 +1,7 @@
 """CSRMesh bearer discovery, separate from owner-initiated claim or reset."""
 import asyncio
 import re
+import time
 from .bluez import BlueZTransport, SERVICE
 from .bridge import LIGHTS
 
@@ -17,16 +18,12 @@ def address_text(value):
 PREFERRED_RELAY_MIN_RSSI = -85
 
 
-def paired_relay_addresses(store):
-    """Bluetooth addresses of lights verified as claimed by this bridge and still owned.
-
-    An RL4's address is the first six UUID bytes reversed, as for first-device
-    bootstrap. This is a relay preference only, never ownership or identity proof.
-    """
-    owned = {d['device_id']: d['product_id'] for d in store.inventory()['devices']
-             if d['product_id'] in LIGHTS}
+def relay_lights(store):
+    """Match a current light to a Bluetooth address only through a verified claim."""
+    owned = {d['device_id']: d for d in store.inventory()['devices'] if d['product_id'] in LIGHTS}
     retired = set(store.get('retired_claims', []))
-    addresses = set()
+    addresses = {}
+    targets = {}
     for journal in store.journals():
         detail = journal.get('detail')
         if not isinstance(detail, dict):
@@ -34,7 +31,7 @@ def paired_relay_addresses(store):
         identity = detail.get('uuid')
         if (journal.get('kind') != 'claim' or journal.get('status') != 'verified'
                 or journal.get('id') in retired or journal.get('target') not in owned
-                or detail.get('product_id') != owned[journal['target']]
+                or detail.get('product_id') != owned[journal['target']]['product_id']
                 or not isinstance(identity, str) or len(identity) != 32):
             continue
         try:
@@ -47,8 +44,24 @@ def paired_relay_addresses(store):
             address = address_text(':'.join(f'{b:02X}' for b in raw[:6][::-1]))
         except ValueError:
             continue
-        addresses.add(address)
-    return addresses
+        target = journal['target']
+        addresses.setdefault(address, set()).add(target)
+        targets.setdefault(target, set()).add(address)
+    lights = {}
+    for address, matches in addresses.items():
+        if len(matches) == 1:
+            target, = matches
+            if len(targets[target]) == 1:
+                lights[address] = {'device_id': target, 'name': owned[target]['name']}
+    return lights
+
+
+def paired_relay_addresses(store):
+    return set(relay_lights(store))
+
+
+class RelayScanBusy(RuntimeError):
+    pass
 
 
 class AutoBlueZTransport(BlueZTransport):
@@ -61,27 +74,28 @@ class AutoBlueZTransport(BlueZTransport):
     def __init__(self, adapter='hci0', **kwargs):
         super().__init__('00:00:00:00:00:00', adapter, **kwargs)
         self._connecting = False
+        self._scan_lock = asyncio.Lock()
         # Optional callable returning addresses of this bridge's own paired lights.
         self.preferred_relays = None
         self.relay_preferred = None
+        self.scan_policy = None
+        self.observations = {}
+        self.latest_candidates = set()
+        self.scanned_at = None
+        self.scan_number = 0
+        self.attempted_preference = None
 
     @property
     def selected_address(self):
         return self.address if self.ready else None
 
-    async def connect(self):
-        if self._connecting:
-            raise RuntimeError('Bluetooth connection attempt already active')
-        if self.client is not None and self.client.is_connected:
-            raise RuntimeError('Previous Bluetooth connection has not closed')
-        self._connecting = True
-        self.ready = False
-        try:
+    async def scan(self, *, manual=False):
+        if manual and (self._connecting or self._scan_lock.locked()):
+            raise RelayScanBusy('Relay discovery is already running')
+        async with self._scan_lock:
             if self.scanner is None:
-                from bleak import BleakScanner, BleakClient
+                from bleak import BleakScanner
                 self.scanner = BleakScanner
-                if self.client_factory is None:
-                    self.client_factory = BleakClient
             rows = await asyncio.wait_for(self.scanner.discover(
                 timeout=5, return_adv=True, bluez={'adapter': self.adapter}), 8)
             candidates = {}
@@ -92,11 +106,35 @@ class AutoBlueZTransport(BlueZTransport):
                     address = address_text(device.address)
                 except ValueError:
                     continue
-                if type(adv.rssi) is not int:
+                if type(adv.rssi) is not int or not -127 <= adv.rssi <= 20:
                     continue
                 candidates[address] = max(adv.rssi, candidates.get(address, adv.rssi))
                 if len(candidates) > 128:
                     raise RuntimeError('Bluetooth candidate scan truncated; narrow scope')
+            self.scan_number += 1
+            self.scanned_at = int(time.time())
+            self.latest_candidates = set(candidates)
+            # Keep all current candidates and the most recent previous ones.
+            history = {address: (signal, self.scanned_at) for address, signal in candidates.items()}
+            for address, sample in self.observations.items():
+                if len(history) >= 128:
+                    break
+                history.setdefault(address, sample)
+            self.observations = history
+            return candidates
+
+    async def connect(self):
+        if self._connecting:
+            raise RuntimeError('Bluetooth connection attempt already active')
+        if self.client is not None and self.client.is_connected:
+            raise RuntimeError('Previous Bluetooth connection has not closed')
+        self._connecting = True
+        self.ready = False
+        try:
+            candidates = await self.scan()
+            if self.client_factory is None:
+                from bleak import BleakClient
+                self.client_factory = BleakClient
             if not candidates:
                 raise RuntimeError('No CSRMesh Bluetooth bearer found')
             # Prefer this bridge's own paired lights with a usable signal: any
@@ -106,12 +144,17 @@ class AutoBlueZTransport(BlueZTransport):
             # an incompatible or vanished advertiser cannot hide a usable bearer.
             # Stable address ordering breaks ties without inferring identity.
             try:
-                preferred = set(self.preferred_relays()) if self.preferred_relays else set()
+                if self.scan_policy:
+                    preferred, choice = self.scan_policy()
+                else:
+                    preferred = set(self.preferred_relays()) if self.preferred_relays else set()
+                    choice = None
             except Exception:
-                preferred = set()  # a preference must never block connecting
+                preferred, choice = set(), None  # A preference must never block connecting.
+            self.attempted_preference = choice
             def rank(address):
                 usable = address in preferred and candidates[address] >= PREFERRED_RELAY_MIN_RSSI
-                return (not usable, -candidates[address], address)
+                return (address != choice, not usable, -candidates[address], address)
             ranked = sorted(candidates, key=rank)[:4]
             for index, address in enumerate(ranked):
                 self.address = address

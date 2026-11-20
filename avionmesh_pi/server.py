@@ -32,6 +32,9 @@ from .identity import examine
 from .dimmer import DimmerEditor
 from .errors import OperationNotStarted
 from .cloud import CloudSync, CloudImport, CloudImportError
+from .relay_settings import RelayConflict, relay_status, save_preference
+from .bluez import BlueZTransport
+from .bootstrap import AutoBlueZTransport, RelayScanBusy
 from .mqtt_settings import SettingsError
 
 from .ui import HTML, management_html
@@ -151,14 +154,17 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
 
     active_writes = 0
 
-    def update_busy(*, own_request=False):
+    def bridge_busy(*, own_request=False, own_write=False):
         operation = runtime.operation
-        return (active_writes > 0 or getattr(runtime, 'maintenance', False)
+        return (active_writes > int(own_write) or getattr(runtime, 'maintenance', False)
                 or runtime._foreground_requests > int(own_request)
                 or (operation.locked() and operation.acquired_by is not runtime._background_read_task)
                 or any(not task.done() for task in jobs.values())
                 or (scene_task is not None and not scene_task.done())
-                or runtime.diagnostics.active() or bool(runtime.store.journals(pending=True)))
+                or runtime.diagnostics.active())
+
+    def update_busy(*, own_request=False):
+        return bridge_busy(own_request=own_request) or bool(runtime.store.journals(pending=True))
 
     updates = BridgeUpdates(runtime, update_busy)
 
@@ -219,7 +225,7 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
             # Pause convenience reads while an owner request waits for the
             # current read and runs once. Diagnostics remain usable meanwhile.
             if write and request.path not in ('/api/capture', '/api/capture/action',
-                    '/api/settings/mqtt', '/api/settings/mqtt/test',
+                    '/api/settings/mqtt', '/api/settings/mqtt/test', '/api/settings/relay',
                     '/api/cloud-import/preview', '/api/cloud-import/apply'):
                 reviewed_inventory = (runtime.store.inventory() if request.path in
                     ('/api/rooms/membership', '/api/group-membership', '/api/group-membership/batch') else None)
@@ -231,6 +237,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
                 response = await handler(request)
         except (BackupManagerError, InstallationBackupError, RestoreStateError) as error:
             response = web.json_response({'error': error.code, 'message': str(error)}, status=getattr(error, 'status', 400))
+        except RelayConflict as error:
+            response = web.json_response({'error': 'relay_unavailable', 'message': str(error)}, status=409)
         except UpdateRequestError as error:
             response = web.json_response({'error': 'update_unavailable', 'message': str(error)}, status=error.status)
         except (SettingsError, CloudImportError) as error:
@@ -280,7 +288,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
     async def capabilities(request):
         caps = status_snapshot().get('capabilities', {})
         return web.json_response({'bridge': 'pi-avionmesh', 'version': __version__, 'instance': instance,
-            'features': {'software_updates': not read_only, 'control': caps.get('light_control') is True, 'group_control': caps.get('group_control') is True,
+            'features': {'relay_settings': isinstance(runtime.transport, BlueZTransport) and not read_only,
+                         'software_updates': not read_only, 'control': caps.get('light_control') is True, 'group_control': caps.get('group_control') is True,
                          'read_states': caps.get('light_control') is True, 'flash': caps.get('light_control') is True,
                          'pair_lights': caps.get('claim') is True and runtime.capabilities.get('ordinary_claim') is True,
                          'detect_type': True, 'labels': True, 'group_metadata': not read_only,
@@ -1252,6 +1261,39 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
         data = await request.json()
         return web.json_response(await getattr(manager, action)(data))
 
+    async def relay_settings(request):
+        if request.method == 'GET':
+            return web.json_response(relay_status(runtime))
+        return web.json_response(save_preference(runtime, await request.json()))
+
+    async def relay_action(request):
+        transport = runtime.transport
+        if not isinstance(transport, AutoBlueZTransport):
+            raise RelayConflict('Relay discovery requires an installation using automatic Bluetooth discovery.')
+        data = await request.json()
+        if bridge_busy(own_request=True, own_write=True) or runtime.operation.locked():
+            raise RelayConflict('Another bridge operation is active. Try again when it finishes.')
+        async with runtime.operation:
+            if request.match_info['action'] == 'scan':
+                if data != {}:
+                    raise ValueError('Unexpected relay scan fields')
+                try:
+                    await transport.scan(manual=True)
+                except RelayScanBusy as error:
+                    raise RelayConflict('Bluetooth discovery is already running. Try again after it finishes.') from error
+                except Exception:
+                    # BlueZ and its D-Bus backend can report driver-specific errors.
+                    return web.json_response({'error': 'relay_scan_failed',
+                        'message': 'The scan did not finish. Previous readings are still shown.'}, status=503)
+                return web.json_response(relay_status(runtime))
+            status = relay_status(runtime)
+            if (not status['current'] or data != {'revision': status['revision'], 'current': status['current']}
+                    or runtime.waiters or transport.lock.locked() or runtime.store.journals(pending=True)):
+                raise RelayConflict('Reconnect unavailable. Review current operations and refresh the relay settings.')
+            # Close admission synchronously. The Bluetooth loop owns disconnection and the next scan.
+            runtime.mesh_ready = transport.ready = False
+            return web.json_response(relay_status(runtime), status=202)
+
     async def software_update(request):
         if read_only:
             raise UpdateRequestError('Software updates are unavailable in preview.', 403)
@@ -1284,6 +1326,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
         web.post('/api/backup/{action:create|preview|restore}', backup_action),
         web.get("/api/scenes", scenes_view), web.post("/api/scenes/{action:create|edit|remove|activate|activate-keypad-test|activate-quiet-test|recover|resume|verify|exposure|set-aside|forget}", scenes_action),
         web.get("/api/capabilities", capabilities), web.post("/api/device-rooms", set_device_rooms),
+        web.get('/api/settings/relay', relay_settings), web.post('/api/settings/relay', relay_settings),
+        web.post('/api/settings/relay/{action:scan|reconnect}', relay_action),
         web.get('/api/settings/update', software_update),
         web.post('/api/settings/update/{action:check|install}', software_update),
         web.get('/api/settings/mqtt', mqtt_settings_view), web.post('/api/settings/mqtt', mqtt_settings_save),

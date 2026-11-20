@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="Development build 0.5.0.dev81" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev81-orange">
+  <img alt="Development build 0.5.0.dev82" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev82-orange">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
   <img alt="Local control, no cloud login for daily use" src="https://img.shields.io/badge/control-local%2C%20no%20cloud%20login-2c68a8">
   <img alt="Licence LGPL-3.0-only" src="https://img.shields.io/badge/licence-LGPL--3.0--only-blue">
@@ -33,7 +33,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Development build: 0.5.0.dev81.** This build is for experienced testers, not
+> **Development build: 0.5.0.dev82.** This build is for experienced testers, not
 > a one-click replacement for the app. Full hardware parity and unattended recovery
 > are still being tested; read [Hardware status](#hardware-status) before you rely on it.
 > HALO Local is not an official Cooper Lighting or Avi-on product, and it is not
@@ -81,6 +81,13 @@
   Three unanswered power checks on the same connection flag that light for attention.
   A power or brightness report clears the warning. The Bluetooth indicator tracks
   the Pi’s connection to its mesh relay.
+- Open **Settings → Advanced → Bluetooth relay** to see the current relay and the
+  last signal strength measured at the Pi. **Scan now** listens for five seconds.
+  A connected light may skip advertising, so each reading includes its scan time.
+  **Automatic** favors paired lights with usable signals. **Prefer a light**
+  tries your selected light first on each connection and falls back if needed.
+  Save the preference and choose **Reconnect now** to apply it immediately while
+  the bridge is idle. Only lights with a known Bluetooth identity can be selected.
 
 ## A closer look
 

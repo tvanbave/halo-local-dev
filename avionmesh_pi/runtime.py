@@ -240,6 +240,7 @@ class Runtime:
 
     def status(self):
         return {"mesh_ready": self.mesh_ready, "mqtt_ready": self.mqtt_ready,
+                "relay_scan_number": getattr(self.transport, "scan_number", None),
                 "bluetooth_starting": self._bluetooth_startup_failures is not None,
                 "bluetooth_startup_retrying": (self._bluetooth_startup_failures or 0) >= BLUETOOTH_STARTUP_FAILURE_NOTICE,
                 "mqtt_enabled": self.mqtt_enabled,

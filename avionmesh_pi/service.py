@@ -293,9 +293,9 @@ async def _serve_once(config, restart, restart_event):
         else:
             transport = BlueZTransport(config["relay_address"], config.get("adapter", "hci0"))
         runtime = Runtime(store, key, transport, node=config["node"])
-        if hasattr(transport, 'preferred_relays'):
-            from .bootstrap import paired_relay_addresses
-            transport.preferred_relays = lambda: paired_relay_addresses(store)
+        if hasattr(transport, 'scan_policy'):
+            from .relay_settings import scan_policy
+            transport.scan_policy = lambda: scan_policy(store)
         runtime.capabilities = config.get("capabilities", {})
         if bootstrap:runtime.bootstrap = AutomaticBootstrap(runtime) if automatic else BootstrapSelection(runtime)
         # A Settings save is an explicit MQTT opt-in. Its private durable

@@ -56,6 +56,44 @@ class SettingsHttpTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await preview.post(base+'/install', headers=self.headers, json={})).status, 403)
             lookup.assert_called_once()
 
+    async def test_relay_settings_scan_and_idle_reconnect(self):
+        from avionmesh_pi.bootstrap import AutoBlueZTransport
+        from test_bootstrap_automatic import advertisement, FIRST
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        route = '/api/settings/relay'
+        scanner = SimpleNamespace(discover=AsyncMock(return_value={1: advertisement(FIRST, -53)}))
+        transport = self.runtime.transport = AutoBlueZTransport(scanner=scanner)
+        transport.ready, transport.address = True, FIRST
+        self.assertEqual((await self.client.post(route+'/scan', json={})).status, 401)
+        response = await self.client.get(route, headers=self.headers)
+        value = await response.json()
+        self.assertEqual(value['current'], FIRST)
+        scanner.discover.assert_not_awaited()
+        async with self.runtime.operation:
+            response = await self.client.post(route+'/scan', headers=self.headers, json={})
+            self.assertEqual(response.status, 409)
+        scanner.discover.assert_not_awaited()
+        response = await self.client.post(route+'/scan', headers=self.headers, json={})
+        self.assertEqual(response.status, 200)
+        value = await response.json()
+        self.assertEqual(value['candidates'][0]['rssi'], -53)
+        self.assertTrue(transport.ready)
+        scanner.discover.side_effect = OSError('radio unavailable')
+        self.assertEqual((await self.client.post(route+'/scan', headers=self.headers, json={})).status, 503)
+        self.assertEqual(transport.observations[FIRST][0], -53)
+        self.assertTrue(transport.ready)
+        response = await self.client.post(route, headers=self.headers, json={'revision':value['revision'], 'preferred':None})
+        self.assertEqual(response.status, 200)
+        data = {'revision':(await response.json())['revision'], 'current':FIRST}
+        with patch.object(self.store, 'journals', return_value=[{'kind':'claim'}]):
+            self.assertEqual((await self.client.post(route+'/reconnect', headers=self.headers, json=data)).status, 409)
+        self.assertTrue(transport.ready)
+        self.assertEqual((await self.client.post(route+'/reconnect', headers=self.headers, json=data)).status, 202)
+        self.assertFalse(transport.ready)
+        self.assertFalse(self.runtime.mesh_ready)
+        self.assertEqual(scanner.discover.await_count, 2)
+
     async def get_settings(self):
         response = await self.client.get('/api/settings/mqtt', headers=self.headers)
         self.assertEqual(response.status, 200)

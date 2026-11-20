@@ -21,7 +21,7 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
    let body;try{body=req.postDataJSON();}catch{}s.calls.push({path:u.pathname,method:req.method(),body});
    const send=(value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
    const handler=s.handlers[req.method()+' '+u.pathname];if(handler)return handler({body,send,route});
-   if(u.pathname==='/api/capabilities')return send({version:'0.5.0.dev16',features:{software_updates:true,control:true,labels:true,group_metadata:true,mqtt_settings:true,cloud_import:true},types:{lights:{93:'RL4'},controllers:{},color_temp:[93]}});
+   if(u.pathname==='/api/capabilities')return send({version:'0.5.0.dev16',features:{relay_settings:true,software_updates:true,control:true,labels:true,group_metadata:true,mqtt_settings:true,cloud_import:true},types:{lights:{93:'RL4'},controllers:{},color_temp:[93]}});
    if(u.pathname==='/api/snapshot')return send(s.snapshot);
    if(u.pathname==='/api/events')return route.fulfill({contentType:'text/event-stream',body:''});
    if(u.pathname==='/api/settings/mqtt'&&req.method()==='GET')return send(s.mqtt);
@@ -95,6 +95,49 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
  await scenario('settings-mobile-and-cloud-name-escaping',async(p,s)=>{
   s.handlers['POST /api/cloud-import/preview']=({send})=>{const data=ready();data.selected_location.name='<img src=x onerror=alert(1)>';data.changes.devices_added[0].name='<script>window.injected=true</script>';return send(data);};await preview(p);assert.equal(await p.evaluate(()=>window.injected),undefined);assert.equal(await p.locator('#cloudReview script, #cloudReview img').count(),0);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));await p.screenshot({path:path.join(evidence,'settings-mobile.png'),fullPage:true});
  },true);
+ for (const mobile of [false,true]) await scenario('relay selection and manual scan '+(mobile?'mobile':'desktop'),async(p,s)=>{
+  const route='/api/settings/relay', first='02:00:00:00:00:01', other='02:00:00:00:00:02';
+  let state={revision:'r1',configurable:true,preferred:null,current:first,scanned_at:1700000000,
+    candidates:[{address:first,name:'Theatre 1',device_id:40001,rssi:-60,seen_at:1700000000,latest:true},
+                {address:other,name:'Hall lamp',device_id:40002,rssi:-65,seen_at:1700000000,latest:true}]};
+  let scans=0;
+  s.handlers['GET '+route]=({send})=>send(state);
+  s.handlers['POST '+route+'/scan']=({body,send})=>{
+    scans++;assert.deepEqual(body,{});
+    state.candidates[0].latest=false;state.candidates[1].rssi=-49;
+    return send(state);
+  };
+  s.handlers['POST '+route]=({body,send})=>{
+    assert.equal(body.revision,state.revision);state={...state,revision:state.revision+'x',preferred:body.preferred?.address||null};
+    return send(state);
+  };
+  s.handlers['POST '+route+'/reconnect']=({body,send})=>{
+    assert.deepEqual(body,{revision:state.revision,current:first});state.current=null;return send(state,202);
+  };
+  await p.locator('#relayPanel summary').click();
+  await p.getByText('Current relay: Theatre 1',{exact:true}).waitFor();
+  await p.getByLabel('Relay selection').selectOption('preferred');
+  await p.getByLabel('Preferred light').selectOption(other);
+  await p.getByRole('button',{name:'Scan now',exact:true}).click();
+  await p.getByText(/-49 dBm/).waitFor();
+  assert.equal(scans,1);
+  assert(await p.getByText(/Not seen in latest scan/).isVisible());
+  assert.equal(await p.getByLabel('Preferred light').inputValue(),other);
+  assert.equal(state.current,first);
+  await p.getByRole('button',{name:'Save preference'}).click();
+  await p.getByText('Preference saved for the next connection.').waitFor();
+  assert.equal(state.preferred,other);
+  await p.getByRole('button',{name:'Reconnect now'}).click();
+  await p.getByText('Bluetooth relay disconnected').waitFor();
+  state.current=first;state.fallback=true;
+  await p.evaluate(()=>{S.status.relay_scan_number=2;render();});
+  await p.getByText('Current relay: Theatre 1 (automatic fallback)').waitFor();
+  await p.getByLabel('Relay selection').selectOption('automatic');
+  await p.getByRole('button',{name:'Save preference'}).click();
+  await p.getByText('Preference saved for the next connection.').waitFor();
+  assert.equal(state.preferred,null);
+  assert(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ },mobile);
  for (const mobile of [false,true]) await scenario('bridge update confirmation and recovery '+(mobile?'mobile':'desktop'),async(p,s)=>{
   const path='/api/settings/update', installed='0.5.0.dev81', latest='0.5.0.dev82';
   let state={installed,latest:null,job:{phase:'unavailable'},available:false}, writes=0;

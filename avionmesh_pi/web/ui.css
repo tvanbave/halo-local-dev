@@ -436,3 +436,6 @@ select{height:2.6em}
 .scene-bulk legend{font-weight:600}
 .scene-bulk .scene-values{margin:0 0 12px}
 @media(max-width:820px){.table-name{min-height:44px}}
+
+.relay-list{list-style:none;padding:0;overflow-wrap:anywhere}
+.relay-list li{padding:.5em 0;border-bottom:1px solid var(--line)}

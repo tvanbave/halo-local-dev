@@ -62,6 +62,22 @@ window.BridgeSettings = (() => {
       <button class="btn" id="updateCancel" type="button">Cancel</button>
       <button class="btn primary" id="updateProceed" type="button">Install and restart</button></div></div>
     </details>
+    <details class="card settings-disclosure" data-settings-panel="advanced" id="relayPanel" hidden><summary>Advanced</summary>
+      <h3>Bluetooth relay</h3>
+      <p id="relayCurrent">Loading current relay…</p>
+      <div id="relayControls" hidden>
+        <div class="field"><label for="relayMode">Relay selection</label><select class="inp" id="relayMode">
+          <option value="automatic">Automatic</option><option value="preferred">Prefer a light</option></select></div>
+        <div class="field" id="relayLightField" hidden><label for="relayLight">Preferred light</label><select class="inp" id="relayLight"></select></div>
+        <p class="hint">On the next connection the bridge tries your preferred light first, then falls back automatically. Reconnect now to switch sooner.</p>
+        <div class="row"><button type="button" class="btn primary" id="relaySave" disabled>Save preference</button>
+          <button type="button" class="btn" id="relayReconnect">Reconnect now</button></div>
+      </div>
+      <h4>Relay candidates</h4>
+      <p id="relayScanTime" class="hint"></p><ul id="relayList" class="relay-list"></ul>
+      <button type="button" class="btn" id="relayScan">Scan now</button>
+      <p id="relayResult" role="status" aria-live="polite"></p>
+    </details>
     <details class="card settings-disclosure" data-settings-panel="backup" hidden><summary>Backup &amp; restore</summary><div id="backupSettingsMount"></div></details>`;
     return element;
   }
@@ -251,11 +267,96 @@ window.BridgeSettings = (() => {
       field('updateInstall').disabled = false;
     }
   }
+  let relay = null, relayBusy = false, relayDirty = false, relayRevision = null;
+  let relayOptions = null, relayStamp = null;
+  const relayVisible = () => panel?.isConnected && field('relayPanel')?.open;
+  const sampleTime = value => new Date(value * 1000).toLocaleString();
+  function relayButtons() {
+    const prefer = field('relayMode').value === 'preferred';
+    field('relayLightField').hidden = !prefer;
+    field('relaySave').disabled = !relay?.configurable || relayBusy || !relayDirty || (prefer && !field('relayLight').value);
+    field('relayMode').disabled = field('relayLight').disabled = !relay || relayBusy === 'save' || relayBusy === 'reconnect';
+    field('relayScan').disabled = relayBusy || (relay && !relay.configurable);
+    field('relayReconnect').disabled = relayBusy || relayDirty || !relay?.current;
+  }
+  function drawRelay(value) {
+    relay = value;
+    const rows = [...value.candidates].sort((a,b) => (a.name || a.address).localeCompare(b.name || b.address, undefined, {numeric:true}));
+    const connected = rows.find(row => row.address === value.current);
+    message('relayCurrent', connected ? 'Current relay: ' + (connected.name || connected.address) +
+      (value.fallback ? ' (automatic fallback)' : '') : 'Bluetooth relay disconnected');
+    field('relayControls').hidden = !value.configurable;
+    const select = field('relayLight'), options = rows.filter(row => row.device_id !== null);
+    const optionsHtml = '<option value="">Choose a paired light</option>' + options.map(row =>
+      '<option value="'+escape(row.address)+'">'+escape(row.name)+' (#'+escape(row.device_id)+')</option>').join('');
+    if (relayOptions !== optionsHtml) {
+      const previous = select.value;
+      select.innerHTML = relayOptions = optionsHtml;
+      select.value = previous || '';
+    }
+    if (!relayDirty) {
+      relayRevision = value.revision;
+      field('relayMode').value = value.preferred ? 'preferred' : 'automatic';
+      select.value = value.preferred || '';
+    }
+    field('relayList').innerHTML = rows.map(row => '<li><strong>' + escape(row.name || 'Unidentified relay') +
+      '</strong> · ' + escape(row.address) + '<br>' +
+      (row.rssi === null ? 'No signal reading yet' : escape(row.rssi)+' dBm · '+escape(sampleTime(row.seen_at)) +
+      (row.latest ? '' : ' · Not seen in latest scan')) + '</li>').join('');
+    message('relayScanTime', !value.configurable ? 'Relay selection is fixed by the installation configuration.' :
+      (value.scanned_at ? 'Last scan: '+sampleTime(value.scanned_at)+'. ' : '') +
+      'Signal strength is measured at the Pi. A connected light may stop advertising.');
+    field('relayScan').hidden = !value.configurable;
+    relayButtons();
+  }
+  async function relayRequest(action) {
+    if (relayBusy || !relayVisible()) return;
+    let url = '/api/settings/relay', data;
+    if (action === 'save') {
+      const row = relay?.candidates.find(item => item.address === field('relayLight').value && item.device_id !== null);
+      const prefer = field('relayMode').value === 'preferred';
+      if (!relayDirty || (prefer && !row)) return;
+      data = {revision:relayRevision, preferred:prefer ? {address:row.address,device_id:row.device_id} : null};
+    } else if (action === 'scan') {
+      url += '/scan'; data = {};
+    } else if (action === 'reconnect') {
+      if (!relay?.current || relayDirty) return;
+      url += '/reconnect'; data = {revision:relay.revision,current:relay.current};
+    }
+    relayBusy = action; relayButtons();
+    if (action === 'scan') message('relayResult','Scanning for about five seconds…');
+    try {
+      const value = await api(url,data);
+      if (action === 'save') relayDirty = false;
+      drawRelay(value);
+      if (action === 'save') message('relayResult','Preference saved for the next connection.');
+      if (action === 'scan') {
+        const count = value.candidates.filter(row => row.latest).length;
+        message('relayResult',count ? 'Scan complete. Heard '+count+(count===1?' candidate.':' candidates.') : 'Scan complete. No relay advertisements heard.');
+      }
+      if (action === 'reconnect') message('relayResult','Reconnecting using the saved preference…');
+      if (action === 'status' && value.current && field('relayResult').textContent.startsWith('Reconnecting')) message('relayResult','Bluetooth reconnected.');
+    } catch (error) {
+      const fallback = action === 'status' ? 'Could not load relay information. Open Advanced again to refresh.' :
+        'The bridge did not confirm the request. Open Advanced again to check its status.';
+      message('relayResult', ['relay_unavailable','relay_scan_failed'].includes(error?.code) ? error.message : failure(error,fallback));
+      if (action === 'save' && error.status === 409) {
+        relayDirty = false;
+        try { drawRelay(await api('/api/settings/relay')); } catch { relay = null; }
+      }
+    } finally { relayBusy = false; relayButtons(); }
+  }
   function activate() {
     const mount = document.getElementById('bridgeSettingsMount');
     if (!mount) { clearSecrets(); clearTimeout(updateTimer); return; }
     if (!panel) {
       panel = build();
+      field('relayPanel').ontoggle = () => { if (relayVisible()) relayRequest('status'); };
+      const editRelay = () => { relayDirty = true; message('relayResult',''); relayButtons(); };
+      field('relayMode').onchange = field('relayLight').onchange = editRelay;
+      field('relaySave').onclick = () => relayRequest('save');
+      field('relayScan').onclick = () => relayRequest('scan');
+      field('relayReconnect').onclick = () => relayRequest('reconnect');
       field('bridgeUpdatePanel').ontoggle = () => {
         if (updateVisible()) updateRequest('status');
         else { cancelUpdate(); clearTimeout(updateTimer); }
@@ -283,6 +384,11 @@ window.BridgeSettings = (() => {
     if (panel.parentNode !== mount) {
       mount.replaceChildren(panel);
       if (updateVisible()) updateRequest('status');
+    }
+    field('relayPanel').hidden = typeof feat !== 'function' || !feat('relay_settings');
+    if (relayVisible() && typeof S !== 'undefined' && !relayBusy) {
+      const stamp = [S.status?.instance,S.status?.inventory_revision,S.status?.mesh_ready,S.status?.relay_scan_number].join('|');
+      if (stamp !== relayStamp) { relayStamp = stamp; relayRequest('status'); }
     }
     field('bridgeUpdatePanel').hidden = typeof feat !== 'function' || !feat('software_updates');
     const backupMount = field('backupSettingsMount');
