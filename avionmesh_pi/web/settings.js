@@ -74,8 +74,12 @@ window.BridgeSettings = (() => {
           <button type="button" class="btn" id="relayReconnect">Reconnect now</button></div>
       </div>
       <h4>Relay candidates</h4>
-      <p id="relayScanTime" class="hint"></p><ul id="relayList" class="relay-list"></ul>
-      <button type="button" class="btn" id="relayScan">Scan now</button>
+      <p id="relayScanTime" class="hint"></p>
+      <div class="row"><button type="button" class="btn" id="relayScan">Scan now</button>
+        <button type="button" class="btn" id="relayExtended">Extended scan (60 seconds)</button></div>
+      <p id="relayScanProgress" class="hint"></p>
+      <ul id="relayList" class="relay-list"></ul>
+      <section id="relayControllerSection" hidden><h4>Nearby controllers</h4><ul id="relayControllers" class="relay-list"></ul></section>
       <p id="relayResult" role="status" aria-live="polite"></p>
     </details>
     <details class="card settings-disclosure" data-settings-panel="backup" hidden><summary>Backup &amp; restore</summary><div id="backupSettingsMount"></div></details>`;
@@ -276,13 +280,51 @@ window.BridgeSettings = (() => {
     field('relayLightField').hidden = !prefer;
     field('relaySave').disabled = !relay?.configurable || relayBusy || !relayDirty || (prefer && !field('relayLight').value);
     field('relayMode').disabled = field('relayLight').disabled = !relay || relayBusy === 'save' || relayBusy === 'reconnect';
-    field('relayScan').disabled = relayBusy || (relay && !relay.configurable);
-    field('relayReconnect').disabled = relayBusy || relayDirty || !relay?.current;
+    const scanning = relay?.extended_scan?.phase === 'running';
+    field('relayExtended').disabled = field('relayScan').disabled = !!relayBusy || scanning || !relay?.configurable;
+    field('relayReconnect').disabled = scanning || relayBusy || relayDirty || !relay?.current;
+  }
+  function meshReport(row) {
+    if (row.device_id == null) return 'Identity unknown';
+    const state = typeof S === 'undefined' ? {} : S;
+    if (state.status?.mesh_ready === false) return 'Bridge disconnected';
+    if (row.kind === 'controller') {
+      return state.controllerViews?.find(v => v.device_id === row.device_id)?.last_event
+        ? 'Input observed this connection' : 'Waiting for controller input';
+    }
+    const light = state.devices?.find(d => d.avion_id === row.device_id);
+    if (light?.power_fresh || light?.color_temp_fresh) return 'Reporting through mesh';
+    if (light?.power_read_status === 'no_reply') return 'Recent power checks unanswered';
+    if (light?.power_last_known || light?.color_temp_last_known || light?.power_observed_ms != null || light?.color_temp != null)
+      return 'Earlier mesh report';
+    return 'Waiting for mesh report';
+  }
+  function showRelayRows(id, rows) {
+    const list = field(id);
+    const html = rows.map(row => '<li><strong>' + escape(row.name || 'Unidentified relay') +
+      '</strong> · ' + escape(row.address) + '<br>Direct signal: ' +
+      (row.rssi == null ? 'No signal reading yet' : escape(row.rssi)+' dBm · '+escape(sampleTime(row.seen_at)) +
+      (row.latest ? '' : ' · Not seen in latest scan')) + '<br>Mesh: ' + meshReport(row) + '</li>').join('');
+    if (list._relayMarkup !== html) { list.innerHTML = html; list._relayMarkup = html; }
+  }
+  function updateRelayReadings() {
+    if (!relay) return;
+    const sorted = rows => [...rows].sort((a,b) => (a.name || a.address).localeCompare(b.name || b.address, undefined, {numeric:true}));
+    showRelayRows('relayList', sorted(relay.candidates));
+    const controllers = relay.controllers || [];
+    field('relayControllerSection').hidden = !controllers.length;
+    showRelayRows('relayControllers', sorted(controllers));
+    const scan = relay.extended_scan;
+    const latest = typeof S !== 'undefined' && S.status?.relay_extended_scan;
+    const remaining = latest?.phase === 'running' ? latest.remaining_seconds : scan?.remaining_seconds;
+    const phases = {complete:'Extended scan complete.', interrupted:'Extended scan interrupted. Previous readings are shown.',
+      failed:'Extended scan failed. Previous readings are shown.'};
+    message('relayScanProgress', scan?.phase === 'running' ? 'Extended scan in progress · ' + remaining + ' seconds remaining. Lights are available.' : phases[scan?.phase] || '');
   }
   function drawRelay(value) {
     relay = value;
     const rows = [...value.candidates].sort((a,b) => (a.name || a.address).localeCompare(b.name || b.address, undefined, {numeric:true}));
-    const connected = rows.find(row => row.address === value.current);
+    const connected = [...rows, ...(value.controllers || [])].find(row => row.address === value.current);
     message('relayCurrent', connected ? 'Current relay: ' + (connected.name || connected.address) +
       (value.fallback ? ' (automatic fallback)' : '') : 'Bluetooth relay disconnected');
     field('relayControls').hidden = !value.configurable;
@@ -299,14 +341,11 @@ window.BridgeSettings = (() => {
       field('relayMode').value = value.preferred ? 'preferred' : 'automatic';
       select.value = value.preferred || '';
     }
-    field('relayList').innerHTML = rows.map(row => '<li><strong>' + escape(row.name || 'Unidentified relay') +
-      '</strong> · ' + escape(row.address) + '<br>' +
-      (row.rssi === null ? 'No signal reading yet' : escape(row.rssi)+' dBm · '+escape(sampleTime(row.seen_at)) +
-      (row.latest ? '' : ' · Not seen in latest scan')) + '</li>').join('');
+    updateRelayReadings();
     message('relayScanTime', !value.configurable ? 'Relay selection is fixed by the installation configuration.' :
       (value.scanned_at ? 'Last scan: '+sampleTime(value.scanned_at)+'. ' : '') +
-      'Signal strength is measured at the Pi. A connected light may stop advertising.');
-    field('relayScan').hidden = !value.configurable;
+      'Direct signal measures advertisements heard at the Pi. A light can report through the mesh even when the Pi hears no advertisement.');
+    field('relayExtended').hidden = field('relayScan').hidden = !value.configurable;
     relayButtons();
   }
   async function relayRequest(action) {
@@ -317,13 +356,14 @@ window.BridgeSettings = (() => {
       const prefer = field('relayMode').value === 'preferred';
       if (!relayDirty || (prefer && !row)) return;
       data = {revision:relayRevision, preferred:prefer ? {address:row.address,device_id:row.device_id} : null};
-    } else if (action === 'scan') {
-      url += '/scan'; data = {};
+    } else if (action === 'scan' || action === 'extended') {
+      url += '/scan'; data = action === 'extended' ? {seconds:60} : {};
     } else if (action === 'reconnect') {
       if (!relay?.current || relayDirty) return;
       url += '/reconnect'; data = {revision:relay.revision,current:relay.current};
     }
     relayBusy = action; relayButtons();
+    if (action === 'extended') message('relayResult','');
     if (action === 'scan') message('relayResult','Scanning for about five seconds…');
     try {
       const value = await api(url,data);
@@ -355,6 +395,7 @@ window.BridgeSettings = (() => {
       const editRelay = () => { relayDirty = true; message('relayResult',''); relayButtons(); };
       field('relayMode').onchange = field('relayLight').onchange = editRelay;
       field('relaySave').onclick = () => relayRequest('save');
+      field('relayExtended').onclick = () => relayRequest('extended');
       field('relayScan').onclick = () => relayRequest('scan');
       field('relayReconnect').onclick = () => relayRequest('reconnect');
       field('bridgeUpdatePanel').ontoggle = () => {
@@ -387,7 +428,8 @@ window.BridgeSettings = (() => {
     }
     field('relayPanel').hidden = typeof feat !== 'function' || !feat('relay_settings');
     if (relayVisible() && typeof S !== 'undefined' && !relayBusy) {
-      const stamp = [S.status?.instance,S.status?.inventory_revision,S.status?.mesh_ready,S.status?.relay_scan_number].join('|');
+      updateRelayReadings();
+      const stamp = [S.status?.relay_extended_scan?.phase,S.status?.instance,S.status?.inventory_revision,S.status?.mesh_ready,S.status?.relay_scan_number].join('|');
       if (stamp !== relayStamp) { relayStamp = stamp; relayRequest('status'); }
     }
     field('bridgeUpdatePanel').hidden = typeof feat !== 'function' || !feat('software_updates');

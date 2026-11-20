@@ -1,6 +1,7 @@
 """Automatic relay choice prefers this bridge's own paired lights. Synthetic only."""
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import patch
 import json
 import tempfile
 import unittest
@@ -51,6 +52,18 @@ class PairedRelayAddressTests(unittest.TestCase):
         self.add('own', 32902, 'verified', OWN_UUID)
         self.assertEqual(paired_relay_addresses(self.store), {OWN})
 
+        runtime = SimpleNamespace(store=self.store, transport=auto.AutoBlueZTransport())
+        heard = '02:00:00:00:00:01'
+        runtime.transport.observations = {heard: (-50, 1700000000)}
+        status = relay_status(runtime)
+        self.assertEqual([(r['device_id'], r['name']) for r in status['controllers']], [(33000, 'Controller')])
+        self.assertNotIn(heard, {r['address'] for r in status['candidates']})
+        self.assertIn(heard, scan_policy(self.store)[2])
+        with self.assertRaises(RelayConflict):
+            save_preference(runtime, {'revision':'initial', 'preferred':{'address':heard, 'device_id':33000}})
+        self.add('collision', 33000, 'verified', OWN_UUID, 81)
+        self.assertNotIn(OWN, paired_relay_addresses(self.store))
+
     def test_missing_or_changed_claim_model_is_not_preferred(self):
         self.add('mismatched', 32902, 'verified', OWN_UUID, 134)
         self.add('unknown', 32902, 'verified', OWN_UUID, None)
@@ -78,9 +91,9 @@ class PairedRelayAddressTests(unittest.TestCase):
         self.assertIsNone(status['candidates'][0]['rssi'])
         with self.assertRaises(RelayConflict):
             save_preference(runtime, {'revision': 'initial', 'preferred': None})
-        self.assertEqual(scan_policy(self.store), ({OWN}, OWN))
+        self.assertEqual(scan_policy(self.store), ({OWN}, OWN, set()))
         self.store.set('retired_claims', ['own'])
-        self.assertEqual(scan_policy(self.store), (set(), None))
+        self.assertEqual(scan_policy(self.store), (set(), None, set()))
         self.assertIsNone(relay_status(runtime)['preferred'])
         with self.assertRaises(RelayConflict):
             save_preference(runtime, {'revision': status['revision'], 'preferred': selection})
@@ -89,7 +102,7 @@ class PairedRelayAddressTests(unittest.TestCase):
     def test_ambiguous_addresses_do_not_get_a_name_or_preference(self):
         self.add('own', 32902, 'verified', OWN_UUID)
         self.add('conflicting', 32902, 'verified', '3c'+OWN_UUID[2:])
-        self.assertEqual(scan_policy(self.store), (set(), None))
+        self.assertEqual(scan_policy(self.store), (set(), None, set()))
 
 
 class RelayChoiceTests(unittest.IsolatedAsyncioTestCase):
@@ -137,7 +150,7 @@ class RelayChoiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.transport.selected_address, STRANGER)
 
     async def test_user_preference_falls_back_and_returns_on_next_connection(self):
-        self.transport.scan_policy = lambda: ({OWN, STRANGER}, OWN)
+        self.transport.scan_policy = lambda: ({OWN, STRANGER}, OWN, set())
         self.advertise([(STRANGER, -45), (OWN, -90)])
         await self.transport.connect()
         self.assertEqual(self.transport.selected_address, OWN)
@@ -152,7 +165,7 @@ class RelayChoiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.transport.selected_address, OWN)
 
     async def test_preferred_advertises_but_connection_fails_then_connects_to_fallback(self):
-        self.transport.scan_policy = lambda: ({OWN, STRANGER}, OWN)
+        self.transport.scan_policy = lambda: ({OWN, STRANGER}, OWN, set())
         self.advertise([(STRANGER, -45), (OWN, -90)])
         self.scanner.find_device_by_address.side_effect = lambda address, **kwargs: (
             None if address == OWN else SimpleNamespace(address=address))
@@ -199,3 +212,57 @@ class RelayChoiceTests(unittest.IsolatedAsyncioTestCase):
         self.scanner.discover.side_effect = None
         await self.transport.scan(manual=True)
         self.assertEqual(self.transport.scan_number, 1)
+
+    async def test_only_verified_controllers_excluded_from_connection_attempts(self):
+        self.transport.scan_policy = lambda: (set(), None, {OWN})
+        self.advertise([(OWN, -30), (STRANGER, -79)])
+        await self.transport.connect()
+        self.assertEqual(self.transport.selected_address, STRANGER)
+        self.assertIn(OWN, self.transport.latest_candidates)
+
+    async def test_private_address_filter_before_limit_preserves_public_and_static(self):
+        def row(address, kind):
+            device, adv = auto.advertisement(address, -74)
+            device.details = {'props': {'AddressType': kind}}
+            return device, adv
+        rows = [row('02:00:00:00:01:%02X' % i, 'random') for i in range(200)]
+        rows += [row('42:00:00:00:00:01', 'random'), row(OWN, 'public'),
+                 row('C2:00:00:00:00:01', 'random'), auto.advertisement(STRANGER, -50)]
+        self.scanner.discover.return_value = dict(enumerate(rows))
+        self.assertEqual(set(await self.transport.scan()), {OWN, STRANGER, 'C2:00:00:00:00:01'})
+
+    async def test_extended_scan_streams_while_connected_and_retains_last_good_read(self):
+        self.advertise([(OWN, -70)])
+        await self.transport.connect()
+        entered = asyncio.Event()
+        class StreamingScanner:
+            def __init__(self, detection_callback, bluez):
+                self.hear = detection_callback
+            async def __aenter__(self):
+                self.hear(*auto.advertisement(STRANGER, -72))
+                self.hear(*auto.advertisement(STRANGER, -60))
+                entered.set()
+                return self
+            async def __aexit__(self, *args):
+                return False
+        with patch.object(self.transport, '_scanner', return_value=StreamingScanner), patch('avionmesh_pi.bootstrap.EXTENDED_SCAN_SECONDS', .05):
+            self.transport.start_extended_scan()
+            await asyncio.wait_for(entered.wait(), 1)
+            self.assertEqual(self.transport.latest_candidates, {OWN})
+            with self.assertRaises(RuntimeError):
+                self.transport.start_extended_scan()
+            await self.transport.send(b'abc')
+            self.assertTrue(self.transport.client.writes)
+            await self.transport.extended_task
+            self.assertEqual(self.transport.extended_status()['phase'], 'complete')
+            self.assertEqual(self.transport.latest_candidates, {STRANGER})
+            self.assertEqual(self.transport.observations[STRANGER][0], -60)
+            self.assertEqual(self.transport.selected_address, OWN)
+            self.transport.start_extended_scan()
+            await self.transport.stop_extended_scan()
+            self.assertEqual(self.transport.extended_status()['phase'], 'interrupted')
+        with patch.object(self.transport, '_scanner', side_effect=OSError('adapter failed')):
+            self.transport.start_extended_scan()
+            await self.transport.extended_task
+        self.assertEqual(self.transport.extended_status()['phase'], 'failed')
+        self.assertEqual(self.transport.latest_candidates, {STRANGER})

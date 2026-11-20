@@ -1,7 +1,7 @@
 """Relay preferences and the last connection scan. Reading settings never starts a scan."""
 from uuid import uuid4
 
-from .bootstrap import AutoBlueZTransport, relay_lights
+from .bootstrap import AutoBlueZTransport, relay_devices, relay_lights
 
 PREFERENCE = 'bluetooth_relay_preference'
 
@@ -20,32 +20,37 @@ def _match(lights, saved):
 
 
 def scan_policy(store):
-    lights = relay_lights(store)
-    return set(lights), _match(lights, _saved(store)['preferred'])
+    devices = relay_devices(store)
+    lights = {a: d for a, d in devices.items() if d['kind'] == 'light'}
+    return set(lights), _match(lights, _saved(store)['preferred']), devices.keys() - lights.keys()
 
 
 def relay_status(runtime):
     transport, store = runtime.transport, runtime.store
     automatic = isinstance(transport, AutoBlueZTransport)
     current = getattr(transport, 'address', None) if transport.ready else None
-    lights = relay_lights(store)
+    devices = relay_devices(store)
+    lights = {a: d for a, d in devices.items() if d['kind'] == 'light'}
     saved = _saved(store)
     preferred = _match(lights, saved['preferred'])
     observations = transport.observations if automatic else {}
     addresses = set(lights) | observations.keys()
     if current:
         addresses.add(current)
-    candidates = []
+    candidates, controllers = [], []
     for address in sorted(addresses):
         signal, seen = observations.get(address, (None, None))
-        candidates.append(dict(address=address, **lights.get(address, {'device_id': None, 'name': None}),
+        known = devices.get(address, {'device_id': None, 'name': None, 'kind': 'unknown'})
+        rows = controllers if known['kind'] == 'controller' else candidates
+        rows.append(dict(address=address, **known,
                                rssi=signal, seen_at=seen,
                                latest=automatic and address in transport.latest_candidates))
     return {'configurable': automatic, 'revision': saved['revision'], 'preferred': preferred,
             'current': current, 'scanned_at': transport.scanned_at if automatic else None,
             'fallback': bool(automatic and current and preferred and current != preferred
                              and transport.attempted_preference == preferred),
-            'candidates': candidates}
+            'candidates': candidates, 'controllers': controllers,
+            'extended_scan': transport.extended_status() if automatic else None}
 
 
 class RelayConflict(ValueError):

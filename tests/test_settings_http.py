@@ -94,6 +94,34 @@ class SettingsHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.mesh_ready)
         self.assertEqual(scanner.discover.await_count, 2)
 
+    async def test_extended_scan_is_asynchronous_and_does_not_reserve_radio(self):
+        from avionmesh_pi.bootstrap import AutoBlueZTransport
+        entered = asyncio.Event()
+        class Scanner:
+            def __init__(self, **kwargs):
+                pass
+            async def __aenter__(self):
+                entered.set()
+                return self
+            async def __aexit__(self, *args):
+                return False
+        route = '/api/settings/relay/scan'
+        transport = self.runtime.transport = AutoBlueZTransport(scanner=Scanner)
+        transport.ready = True
+        for value in (5, 60.0, True, '60'):
+            self.assertEqual((await self.client.post(route, headers=self.headers, json={'seconds':value})).status, 400)
+        response = await self.client.post(route, headers=self.headers, json={'seconds':60})
+        self.assertEqual(response.status, 202)
+        self.assertEqual((await response.json())['extended_scan']['phase'], 'running')
+        await asyncio.wait_for(entered.wait(), 1)
+        try:
+            self.assertFalse(self.runtime.operation.locked())
+            self.assertEqual(self.runtime.status()['relay_extended_scan']['phase'], 'running')
+            for body in ({}, {'seconds':60}):
+                self.assertEqual((await self.client.post(route, headers=self.headers, json=body)).status, 409)
+        finally:
+            await transport.stop_extended_scan()
+
     async def get_settings(self):
         response = await self.client.get('/api/settings/mqtt', headers=self.headers)
         self.assertEqual(response.status, 200)

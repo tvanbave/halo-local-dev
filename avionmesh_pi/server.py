@@ -1275,17 +1275,23 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
             raise RelayConflict('Another bridge operation is active. Try again when it finishes.')
         async with runtime.operation:
             if request.match_info['action'] == 'scan':
-                if data != {}:
+                extended = data == {'seconds': 60} and type(data['seconds']) is int
+                if data != {} and not extended:
                     raise ValueError('Unexpected relay scan fields')
                 try:
+                    if extended:
+                        transport.start_extended_scan()
+                        return web.json_response(relay_status(runtime), status=202)
                     await transport.scan(manual=True)
                 except RelayScanBusy as error:
-                    raise RelayConflict('Bluetooth discovery is already running. Try again after it finishes.') from error
+                    raise RelayConflict(str(error)) from error
                 except Exception:
                     # BlueZ and its D-Bus backend can report driver-specific errors.
                     return web.json_response({'error': 'relay_scan_failed',
                         'message': 'The scan did not finish. Previous readings are still shown.'}, status=503)
                 return web.json_response(relay_status(runtime))
+            if transport.extended_phase == 'running':
+                raise RelayConflict('Wait for the extended scan to finish before reconnecting.')
             status = relay_status(runtime)
             if (not status['current'] or data != {'revision': status['revision'], 'current': status['current']}
                     or runtime.waiters or transport.lock.locked() or runtime.store.journals(pending=True)):
@@ -1310,6 +1316,8 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
         return web.json_response({"error": "not_implemented", "operation": request.match_info["operation"]}, status=501)
 
     async def shutdown(app):
+        if isinstance(runtime.transport, AutoBlueZTransport):
+            await runtime.transport.stop_extended_scan()
         await updates.close()
         tasks=list(jobs.values())+list(streams)
         if scene_task is not None:

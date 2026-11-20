@@ -3,7 +3,7 @@ import asyncio
 import re
 import time
 from .bluez import BlueZTransport, SERVICE
-from .bridge import LIGHTS
+from .bridge import CONTROLLERS, LIGHTS
 
 
 def address_text(value):
@@ -18,9 +18,9 @@ def address_text(value):
 PREFERRED_RELAY_MIN_RSSI = -85
 
 
-def relay_lights(store):
-    """Match a current light to a Bluetooth address only through a verified claim."""
-    owned = {d['device_id']: d for d in store.inventory()['devices'] if d['product_id'] in LIGHTS}
+def relay_devices(store):
+    """Match a current device to a Bluetooth address only through a verified claim."""
+    owned = {d['device_id']: d for d in store.inventory()['devices'] if d['product_id'] in LIGHTS or d['product_id'] in CONTROLLERS}
     retired = set(store.get('retired_claims', []))
     addresses = {}
     targets = {}
@@ -47,13 +47,18 @@ def relay_lights(store):
         target = journal['target']
         addresses.setdefault(address, set()).add(target)
         targets.setdefault(target, set()).add(address)
-    lights = {}
+    devices = {}
     for address, matches in addresses.items():
         if len(matches) == 1:
             target, = matches
             if len(targets[target]) == 1:
-                lights[address] = {'device_id': target, 'name': owned[target]['name']}
-    return lights
+                devices[address] = {'device_id': target, 'name': owned[target]['name'],
+                                    'kind': 'controller' if owned[target]['product_id'] in CONTROLLERS else 'light'}
+    return devices
+
+
+def relay_lights(store):
+    return {a: d for a, d in relay_devices(store).items() if d['kind'] == 'light'}
 
 
 def paired_relay_addresses(store):
@@ -62,6 +67,28 @@ def paired_relay_addresses(store):
 
 class RelayScanBusy(RuntimeError):
     pass
+
+
+EXTENDED_SCAN_SECONDS = 60
+
+
+def relay_advertisement(device, adv):
+    if SERVICE not in (str(s).lower() for s in (adv.service_uuids or [])):
+        return None
+    try:
+        address = address_text(device.address)
+    except ValueError:
+        return None
+    details = getattr(device, 'details', None)
+    props = details.get('props', {}) if isinstance(details, dict) else {}
+    # These high bits identify private addresses only when BlueZ reports "random".
+    # A public address with identical leading bits and a static random address
+    # are both eligible, including on a fresh mesh with no known lights.
+    if props.get('AddressType') == 'random' and int(address[:2], 16) >> 6 in (0, 1):
+        return None
+    if type(adv.rssi) is not int or not -127 <= adv.rssi <= 20:
+        return None
+    return address, adv.rssi
 
 
 class AutoBlueZTransport(BlueZTransport):
@@ -81,6 +108,9 @@ class AutoBlueZTransport(BlueZTransport):
         self.scan_policy = None
         self.observations = {}
         self.latest_candidates = set()
+        self.extended_task = None
+        self.extended_phase = 'idle'
+        self.extended_deadline = 0
         self.scanned_at = None
         self.scan_number = 0
         self.attempted_preference = None
@@ -89,39 +119,95 @@ class AutoBlueZTransport(BlueZTransport):
     def selected_address(self):
         return self.address if self.ready else None
 
+    def _scanner(self):
+        if self.scanner is None:
+            from bleak import BleakScanner
+            self.scanner = BleakScanner
+        return self.scanner
+
+    def _commit_scan(self, samples):
+        self.scan_number += 1
+        self.scanned_at = int(time.time())
+        self.latest_candidates = set(samples)
+        history = dict(samples)
+        for address, sample in self.observations.items():
+            if len(history) >= 128:
+                break
+            history.setdefault(address, sample)
+        self.observations = history
+
     async def scan(self, *, manual=False):
-        if manual and (self._connecting or self._scan_lock.locked()):
+        if manual and (self._connecting or self._scan_lock.locked() or self.extended_phase == 'running'):
             raise RelayScanBusy('Relay discovery is already running')
         async with self._scan_lock:
-            if self.scanner is None:
-                from bleak import BleakScanner
-                self.scanner = BleakScanner
-            rows = await asyncio.wait_for(self.scanner.discover(
+            rows = await asyncio.wait_for(self._scanner().discover(
                 timeout=5, return_adv=True, bluez={'adapter': self.adapter}), 8)
             candidates = {}
             for device, adv in rows.values():
-                if SERVICE not in [str(s).lower() for s in (adv.service_uuids or [])]:
-                    continue
-                try:
-                    address = address_text(device.address)
-                except ValueError:
-                    continue
-                if type(adv.rssi) is not int or not -127 <= adv.rssi <= 20:
-                    continue
-                candidates[address] = max(adv.rssi, candidates.get(address, adv.rssi))
-                if len(candidates) > 128:
-                    raise RuntimeError('Bluetooth candidate scan truncated; narrow scope')
-            self.scan_number += 1
-            self.scanned_at = int(time.time())
-            self.latest_candidates = set(candidates)
-            # Keep all current candidates and the most recent previous ones.
-            history = {address: (signal, self.scanned_at) for address, signal in candidates.items()}
-            for address, sample in self.observations.items():
-                if len(history) >= 128:
-                    break
-                history.setdefault(address, sample)
-            self.observations = history
+                sample = relay_advertisement(device, adv)
+                if sample:
+                    address, rssi = sample
+                    candidates[address] = max(rssi, candidates.get(address, rssi))
+                    if len(candidates) > 128:
+                        raise RuntimeError('Bluetooth candidate scan truncated; narrow scope')
+            stamp = int(time.time())
+            self._commit_scan({a: (rssi, stamp) for a, rssi in candidates.items()})
+            if manual:
+                self.extended_phase = 'idle'
             return candidates
+
+    def start_extended_scan(self):
+        if not self.ready or self._connecting or self._scan_lock.locked() or self.extended_phase == 'running':
+            raise RelayScanBusy('Extended scan requires a connected, idle scanner.')
+        self.extended_phase = 'running'
+        self.extended_deadline = time.monotonic() + EXTENDED_SCAN_SECONDS
+        self.extended_task = asyncio.create_task(self._extended_scan())
+
+    def extended_status(self):
+        return {'phase': self.extended_phase,
+                'remaining_seconds': max(0, int(self.extended_deadline - time.monotonic() + .999))
+                if self.extended_phase == 'running' else 0}
+
+    async def _extended_scan(self):
+        samples = {}
+        overflow = asyncio.Event()
+        def hear(device, adv):
+            sample = relay_advertisement(device, adv)
+            if sample:
+                address, rssi = sample
+                if address not in samples and len(samples) >= 128:
+                    overflow.set()
+                    return
+                samples[address] = (rssi, int(time.time()))
+
+        async def listen():
+            async with self._scanner()(detection_callback=hear, bluez={'adapter': self.adapter}):
+                try:
+                    await asyncio.wait_for(overflow.wait(), EXTENDED_SCAN_SECONDS)
+                except asyncio.TimeoutError:
+                    return
+                raise RuntimeError('Too many relay candidates')
+
+        try:
+            async with self._scan_lock:
+                await asyncio.wait_for(listen(), EXTENDED_SCAN_SECONDS + 8)
+                if not self.ready:
+                    self.extended_phase = 'interrupted'
+                    return
+                self._commit_scan(samples)
+                self.extended_phase = 'complete'
+        except asyncio.CancelledError:
+            self.extended_phase = 'interrupted'
+            raise
+        except Exception:
+            self.extended_phase = 'failed'
+
+    async def stop_extended_scan(self):
+        task = self.extended_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self.extended_phase = 'interrupted'
 
     async def connect(self):
         if self._connecting:
@@ -131,6 +217,7 @@ class AutoBlueZTransport(BlueZTransport):
         self._connecting = True
         self.ready = False
         try:
+            await self.stop_extended_scan()
             candidates = await self.scan()
             if self.client_factory is None:
                 from bleak import BleakClient
@@ -145,17 +232,19 @@ class AutoBlueZTransport(BlueZTransport):
             # Stable address ordering breaks ties without inferring identity.
             try:
                 if self.scan_policy:
-                    preferred, choice = self.scan_policy()
+                    preferred, choice, controllers = self.scan_policy()
                 else:
                     preferred = set(self.preferred_relays()) if self.preferred_relays else set()
-                    choice = None
+                    choice, controllers = None, set()
             except Exception:
-                preferred, choice = set(), None  # A preference must never block connecting.
+                preferred, choice, controllers = set(), None, set()  # A preference must never block connecting.
             self.attempted_preference = choice
             def rank(address):
                 usable = address in preferred and candidates[address] >= PREFERRED_RELAY_MIN_RSSI
                 return (address != choice, not usable, -candidates[address], address)
-            ranked = sorted(candidates, key=rank)[:4]
+            ranked = sorted(candidates.keys() - controllers, key=rank)[:4]
+            if not ranked:
+                raise RuntimeError('No eligible CSRMesh Bluetooth bearer found')
             for index, address in enumerate(ranked):
                 self.address = address
                 self.relay_preferred = address in preferred

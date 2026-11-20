@@ -98,11 +98,13 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
  for (const mobile of [false,true]) await scenario('relay selection and manual scan '+(mobile?'mobile':'desktop'),async(p,s)=>{
   const route='/api/settings/relay', first='02:00:00:00:00:01', other='02:00:00:00:00:02';
   let state={revision:'r1',configurable:true,preferred:null,current:first,scanned_at:1700000000,
+    controllers:[{address:'02:00:00:00:00:03',name:'Hall keypad',device_id:40003,kind:'controller',rssi:-70,seen_at:1700000000,latest:true}],
     candidates:[{address:first,name:'Theatre 1',device_id:40001,rssi:-60,seen_at:1700000000,latest:true},
                 {address:other,name:'Hall lamp',device_id:40002,rssi:-65,seen_at:1700000000,latest:true}]};
   let scans=0;
   s.handlers['GET '+route]=({send})=>send(state);
   s.handlers['POST '+route+'/scan']=({body,send})=>{
+    if (body.seconds === 60) {state.extended_scan={phase:'running',remaining_seconds:60};return send(state,202);}
     scans++;assert.deepEqual(body,{});
     state.candidates[0].latest=false;state.candidates[1].rssi=-49;
     return send(state);
@@ -124,6 +126,19 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
   assert(await p.getByText(/Not seen in latest scan/).isVisible());
   assert.equal(await p.getByLabel('Preferred light').inputValue(),other);
   assert.equal(state.current,first);
+  assert(await p.locator('#relayControllers').getByText('Hall keypad').isVisible());
+  assert.equal(await p.getByLabel('Preferred light').locator('option').filter({hasText:'Hall keypad'}).count(),0);
+  await p.getByRole('button',{name:'Extended scan (60 seconds)'}).click();
+  await p.getByText(/Extended scan in progress/).waitFor();
+  assert(await p.getByRole('button',{name:'Scan now',exact:true}).isDisabled());
+  assert.equal(await p.getByLabel('Preferred light').inputValue(),other);
+  state.extended_scan={phase:'complete',remaining_seconds:0};
+  state.candidates[0].rssi=null;
+  await p.evaluate(()=>{S.devices=[{avion_id:40001,power_fresh:true}];S.status.mesh_ready=true;
+    S.status.relay_extended_scan={phase:'complete',remaining_seconds:0};render();});
+  await p.getByText('Extended scan complete.').waitFor();
+  const lightRow=p.locator('#relayList li').filter({hasText:'Theatre 1'});
+  assert.match(await lightRow.textContent(),/Direct signal: No signal reading yet.*Mesh: Reporting through mesh/);
   await p.getByRole('button',{name:'Save preference'}).click();
   await p.getByText('Preference saved for the next connection.').waitFor();
   assert.equal(state.preferred,other);
