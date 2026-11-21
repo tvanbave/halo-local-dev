@@ -12,9 +12,9 @@
     "Dockerfile": "b45c71d312a0f4f3e93199b642de3cb2cf274779f9735c70482011f1cd2c49a6",
     "LICENSE": "9e966c80dc78a15b7ab4bda2cd479510f4401460e88713362e84653cfd223704",
     "NOTICE": "88000a75ca01f1fba338571a9f5e1a2a3da34dcabf477d3c26e3d9f097c23f22",
-    "README.md": "7aac44933fbb117106ff98a430d6304d6909de7a16766582e5b2f6f454e8e6f0",
+    "README.md": "019dab63fa17bc5767b56598a4fd9d7a020683e4fb6f4d51ba6865f1680844f5",
     "SECURITY.md": "46bd59acedde545333494ce72554bfee28ef4e9de8103c8e71c9abba8c2250fd",
-    "avionmesh_pi/__init__.py": "7ddf2825060357f57a109a0f9b388519c14bbbff763a4f2fdf6f6fec73c2bda8",
+    "avionmesh_pi/__init__.py": "d573de8f6b9c8167cc6edf64b53be0fa765af6ab978f07b321d35c471dd08eef",
     "avionmesh_pi/__main__.py": "83c59f077d67904ef3f071d2aa411bf9efd45b60ac649ca91931f00e021492aa",
     "avionmesh_pi/accessory.py": "e51faff3b75053a8946bf4907ffb7b8e01982dce66c3725a183844bdd22da18d",
     "avionmesh_pi/anyplace.py": "8b4a44cb986cde7dcc2e1de8aaa52540e50153c32b640ec80f803985be1d519b",
@@ -77,7 +77,7 @@
     "avionmesh_pi/ui.py": "50a6cde594f2ba2030517c826a3c4a786775f8ffff7f753aae56106d3b859b94",
     "avionmesh_pi/web/backup.js": "d4aa3db835ca34cfcc7ebe9f2ad83cab756fe4a2fa29dcecfe8632430f99db9d",
     "avionmesh_pi/web/ops.js": "4f0d2ddc2d2b13e82a17e7986679cc9e85ad964e459d595dfd20462a0f5c8d44",
-    "avionmesh_pi/web/settings.js": "d17958c14d29e3a7fbce4293a64e71efed67fbe041d8a4f27478dafea94e0dd5",
+    "avionmesh_pi/web/settings.js": "0a16a176a27fb2b3e6b6efe733a18bc66d84f8784fda3de3965539a76ee9cd10",
     "avionmesh_pi/web/setup.css": "8eb6244fe1323ec147eb5051629d1f3a8ab9c3c313804bb50023c9068dea789d",
     "avionmesh_pi/web/setup.html": "a5505dfd4b8b9d072c5bced5c0314412ff7690b50f50dd60cfd78ff8c45a3684",
     "avionmesh_pi/web/setup.js": "52137bf7f06f9a5ae2a74cec45761ef8ee4c97540ad7494507f7241938a7b49b",
@@ -97,7 +97,7 @@
     "docs/ESP-PAIRING-PARITY-DEV62.md": "1b34109f6a14d3fe16bc2a032cb93a7c8b192350ed22302063c08e59711e67ef",
     "docs/INSTALL.md": "8df3c88b53b06578206dfac431cf84200ba6d8c99d51560da193e984b6576f3f",
     "docs/LICENSE-REVIEW.md": "f190ee5e040fe383e8227b074649f0e40d5691bff0be47b8b544891d31bf22a2",
-    "docs/PROVENANCE.json": "763e2d79d7e16a3aac7850bb564fe1cfac27c35dd358372718e1378fbcc8e6fa",
+    "docs/PROVENANCE.json": "40e1aadfae572874d2606c02bb6ec07c7daa0a38927c49175768d8c4c5a78872",
     "docs/ROADMAP.md": "467da84b6a681c37e550d4f9031eee13397b07e93b64d51bf141407c4cfd3ed3",
     "docs/SCENES.md": "4ada2b424d4d417f2b8bb18dfcd1fa16db0d77f50100ec25677bd59a7fb3963b",
     "docs/SEQUENCE-HANDOFF.md": "8bb73e0c9bffb29a84b01c8f5c468ebadc030aef0db964762bfbdc86c6db6a45",
@@ -124,7 +124,7 @@
     "fixtures/vectors.json": "1207b324a8a8f53613eb961bebcd833f4fb6d5e6d55d2c09e3e04e93e4958954",
     "package-lock.json": "6bd9dc7e4c9919073032a22a33b98d3f0254bf60ac3474e573c9b497931fd5f6",
     "package.json": "ae8f5e7ed57f9bcaed903f64800bcb6429707ca213c76652f478e0f5ec6d79ef",
-    "pyproject.toml": "8d27e23587a35c569f928ea32af4e79922a1e6c1a9f09d61cb4e87e4b02b7c65",
+    "pyproject.toml": "dc2ab51fc7f64d82b2547bf206feead026a85d481bef29615c0441613e865766",
     "tests/mac_demo.py": "0feb28a0b67f38fa5d686ec4f9a53f606b726612258e934d5a462f0a40124213",
     "tests/support.py": "7064668407c44bd64fc6c7b2281c7db1234ea3c0014a6c0d5812169a520da55d",
     "tests/test_a19_membership.py": "040a38f101615b155574ccb97fc2cf5867c22aaabb4f03ec453138f3a415e03a",
@@ -280,7 +280,7 @@
     "tests/test_startup_read.py": "a309b6f1c53f21db18e321dc189c445ca01fc2a0ee1716aecacad01745dab050",
     "tests/test_trusted_lan_http.py": "dc441d5ca66326195fa8068c54ef476905318a43b0adaa2bf04e4369084e8b34",
     "tests/test_workflow_http.py": "611769723136c921496f25590aae94ef4dc8865e14f3dd8172293585798f76c8",
-    "tests/verify_installed.py": "107e81f64ddd3eb7d2e8add4c1a0f92c2cc97123912f07026e97f1cef3af3907",
+    "tests/verify_installed.py": "ac1048cb530f4db9bcb820a1af94d8701d3aab627304d1f58e5f3873a8ba544f",
     "tests/wire_lab.py": "3e37d5d0d1ee3338f846b2218b495c0ff5bb45179311366d2b7fe09e05ff174e",
     "tools/capture_readme_screenshots.cjs": "5f63f5a74500e23637a4b14782ec6975a7628e15de4a56329b705f75237d3cd1",
     "tools/enable-updates.sh": "201780bad07dbc29dd8b13119ef98e530954caa7523ba14641dadc1501e1ca1c",
@@ -295,7 +295,7 @@
     "tools/test_scene_live_updates.cjs": "5ead05d04193ce7e09fc63b4ca10cad4aca449c785529101e795efc6d4ecb6b3",
     "tools/test_scene_scrolling.cjs": "d0d55a70fe4323b3de87f98446633c2be71a4e316365680ebe4d507fc120fa3f",
     "tools/test_scenes_browser.cjs": "3994b7173a7f2206d4efd794cbe5b843df8f0cc2996ac086a0dc9fc1b9a1196d",
-    "tools/test_settings_browser.cjs": "dd5a53fbe88c02423c55b02e7813b27a6786006060e8a891b5137e1c3aafadf2"
+    "tools/test_settings_browser.cjs": "ba0a401257a9b97233791ad15fbdfd40d7aabef49a919ff64faef2189932fb28"
   },
-  "source_base_commit": "23f1df4eb211da04212b958a5e5f1e0b2747efd3"
+  "source_base_commit": "a14fa8cc4b1deff6af255541dce15742f87c0c60"
 }

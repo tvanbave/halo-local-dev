@@ -137,11 +137,13 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
   assert.equal(await p.getByLabel('Preferred light').inputValue(),other);
   state.extended_scan={phase:'complete',remaining_seconds:0};
   state.candidates[0].rssi=null;
-  await p.evaluate(()=>{S.devices=[{avion_id:40001,power_fresh:true}];S.status.mesh_ready=true;
+  await p.evaluate(()=>{S.devices=[{avion_id:40001,power_fresh:true},{avion_id:40002,power_fresh:true}];S.status.mesh_ready=true;
     S.status.relay_extended_scan={phase:'complete',remaining_seconds:0};render();});
   await p.getByText('Extended scan complete.').waitFor();
+  // The connected relay reports over the connection itself; every other light reports through the mesh.
   const lightRow=p.locator('#relayList li').filter({hasText:'Theatre 1'});
-  assert.match(await lightRow.textContent(),/Direct signal: No signal reading yet.*Mesh: Reporting through mesh/);
+  assert.match(await lightRow.textContent(),/Direct signal: No signal reading yet.*Mesh: Reporting directly \(connected relay\)/);
+  assert.match(await p.locator('#relayList li').filter({hasText:'Hall lamp'}).textContent(),/Mesh: Reporting through mesh/);
   await p.getByRole('button',{name:'Save preference'}).click();
   await p.getByText('Preference saved for the next connection.').waitFor();
   assert.equal(state.preferred,other);

@@ -293,7 +293,9 @@ window.BridgeSettings = (() => {
         ? 'Input observed this connection' : 'Waiting for controller input';
     }
     const light = state.devices?.find(d => d.avion_id === row.device_id);
-    if (light?.power_fresh || light?.color_temp_fresh) return 'Reporting through mesh';
+    // The connected relay's own reports reach the Pi over the connection itself, not through other lights.
+    if (light?.power_fresh || light?.color_temp_fresh)
+      return row.address === relay?.current ? 'Reporting directly (connected relay)' : 'Reporting through mesh';
     if (light?.power_read_status === 'no_reply') return 'Recent power checks unanswered';
     if (light?.power_last_known || light?.color_temp_last_known || light?.power_observed_ms != null || light?.color_temp != null)
       return 'Earlier mesh report';
