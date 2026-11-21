@@ -2758,7 +2758,7 @@ function applySnapshot(d) {
   S.synced = true;
   // The stream repeats the whole snapshot every second. Re-render only when something shown changed,
   // so open menus, focus and clicks are not interrupted.
-  const sig = JSON.stringify([S.devices, S.groups, S.roomMap, st.pairing, st.mesh_ready, st.bluetooth_starting, st.bluetooth_startup_retrying, st.pending_transactions, st.publication_pending, S.view === 'settings' ? [st.command_timings, st.relay_scan_number, st.relay_extended_scan] : null, st.last_error, st.mqtt_enabled, st.mqtt_ready, st.startup_read, S.groupWorkflow, S.controllerViews, S.sceneWorkflow, sceneEpoch, st.jobs, st.keypad_saves, st.keypad_progress, st.anyplace_progress, st.claim_progress, S.view === 'add' && S.wiz?.step === 1 ? wizRows().map(rowSeenState) : null]);
+  const sig = JSON.stringify([S.devices, S.groups, S.roomMap, st.pairing, st.mesh_ready, st.bluetooth_starting, st.bluetooth_startup_retrying, st.pending_transactions, st.publication_pending, S.view === 'settings' ? [st.command_timings, st.relay_scan_number, st.relay_extended_scan, st.relay_identity] : null, st.last_error, st.mqtt_enabled, st.mqtt_ready, st.startup_read, S.groupWorkflow, S.controllerViews, S.sceneWorkflow, sceneEpoch, st.jobs, st.keypad_saves, st.keypad_progress, st.anyplace_progress, st.claim_progress, S.view === 'add' && S.wiz?.step === 1 ? wizRows().map(rowSeenState) : null]);
   if (sig !== lastSig) { lastSig = sig; renderSoon(); }
 }
 let lastSig = '', lastCapabilityInstance = null, waitingSnapshot = null;

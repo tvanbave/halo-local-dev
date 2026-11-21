@@ -40,7 +40,7 @@ def relay_status(runtime):
     candidates, controllers = [], []
     for address in sorted(addresses):
         signal, seen = observations.get(address, (None, None))
-        known = devices.get(address, {'device_id': None, 'name': None, 'kind': 'unknown'})
+        known = devices.get(address, {'device_id': None, 'name': None, 'kind': 'unknown', 'identity': None})
         rows = controllers if known['kind'] == 'controller' else candidates
         rows.append(dict(address=address, **known,
                                rssi=signal, seen_at=seen,

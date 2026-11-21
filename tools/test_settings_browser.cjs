@@ -99,8 +99,8 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
   const route='/api/settings/relay', first='02:00:00:00:00:01', other='02:00:00:00:00:02';
   let state={revision:'r1',configurable:true,preferred:null,current:first,scanned_at:1700000000,
     controllers:[{address:'02:00:00:00:00:03',name:'Hall keypad',device_id:40003,kind:'controller',rssi:-70,seen_at:1700000000,latest:true}],
-    candidates:[{address:first,name:'Theatre 1',device_id:40001,rssi:-60,seen_at:1700000000,latest:true},
-                {address:other,name:'Hall lamp',device_id:40002,rssi:-65,seen_at:1700000000,latest:true}]};
+    candidates:[{address:first,name:'Theatre 1',device_id:40001,identity:'pairing',rssi:-60,seen_at:1700000000,latest:true},
+                {address:other,name:'Hall lamp',device_id:40002,identity:'observed',rssi:-65,seen_at:1700000000,latest:true}]};
   let scans=0;
   s.handlers['GET '+route]=({send})=>send(state);
   s.handlers['POST '+route+'/scan']=({body,send})=>{
@@ -118,6 +118,9 @@ const ready=()=>({status:'ready',locations:[{id:'house',name:'Home',matching_mes
   };
   await p.locator('#relayPanel summary').click();
   await p.getByText('Current relay: Theatre 1',{exact:true}).waitFor();
+  // A light identified only while it was the connected relay says so; a paired light does not.
+  assert(await p.locator('#relayList li').filter({hasText:'Hall lamp'}).getByText('Identified while connected as the relay').isVisible());
+  assert.equal(await p.locator('#relayList li').filter({hasText:'Theatre 1'}).getByText('Identified while connected as the relay').count(),0);
   await p.getByLabel('Relay selection').selectOption('preferred');
   await p.getByLabel('Preferred light').selectOption(other);
   await p.getByRole('button',{name:'Scan now',exact:true}).click();

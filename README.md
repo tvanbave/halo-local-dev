@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="Development build 0.5.0.dev83" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev83-orange">
+  <img alt="Development build 0.5.0.dev84" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev84-orange">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
   <img alt="Local control, no cloud login for daily use" src="https://img.shields.io/badge/control-local%2C%20no%20cloud%20login-2c68a8">
   <img alt="Licence LGPL-3.0-only" src="https://img.shields.io/badge/licence-LGPL--3.0--only-blue">
@@ -33,7 +33,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Development build: 0.5.0.dev83.** This build is for experienced testers, not
+> **Development build: 0.5.0.dev84.** This build is for experienced testers, not
 > a one-click replacement for the app. Full hardware parity and unattended recovery
 > are still being tested; read [Hardware status](#hardware-status) before you rely on it.
 > HALO Local is not an official Cooper Lighting or Avi-on product, and it is not
@@ -88,10 +88,15 @@
   status separately. The Pi can receive a mesh report through another light.
   Nearby controllers with verified Bluetooth identities appear by name in
   their own list. Temporary Bluetooth addresses are filtered from scan results.
-  **Automatic** favors paired lights with usable signals. **Prefer a light**
+  **Automatic** favors identified lights with usable signals. **Prefer a light**
   tries your selected light first on each connection and falls back if needed.
   Save the preference and choose **Reconnect now** to apply it immediately while
   the bridge is idle. Only lights with a known Bluetooth identity can be selected.
+  A light paired by this bridge is known from its pairing record. Any other light,
+  including lights imported from HALO Home, becomes known once the bridge has
+  connected through it: the relay's own messages reach the Pi with a hop count
+  that no other light's do. Such lights are marked **Identified while connected
+  as the relay**.
 
 ## A closer look
 

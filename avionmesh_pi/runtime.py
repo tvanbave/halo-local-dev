@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from .bridge import Bridge, CONTROLLERS, LIGHTS, COLOR_LIGHTS, load_devices
 from .controllers import binding_status, named_inputs
 from .diagnostics import Diagnostics
+from .relay_identity import RelayIdentity
 from .timing import CommandTimings
 from .errors import OperationNotStarted
 from .scene_mqtt import publications as scene_publications
@@ -102,6 +103,7 @@ class Runtime:
         self.reply_seen = OrderedDict()
         self.capabilities = {}
         self.diagnostics = Diagnostics(self.clock)
+        self.relay_identity = RelayIdentity(store, lambda source: getattr(self.core.devices.get(source), 'product_id', None))
         self.command_timings = CommandTimings(self.clock, self.core.prefix)
         from .scene_engine import SceneEngine
         self.scene_engine = SceneEngine(self)
@@ -241,6 +243,7 @@ class Runtime:
     def status(self):
         return {"mesh_ready": self.mesh_ready, "mqtt_ready": self.mqtt_ready,
                 "relay_scan_number": getattr(self.transport, "scan_number", None),
+                "relay_identity": self.relay_identity.recorded,
                 "relay_extended_scan": self.transport.extended_status() if hasattr(self.transport, "extended_status") else None,
                 "bluetooth_starting": self._bluetooth_startup_failures is not None,
                 "bluetooth_startup_retrying": (self._bluetooth_startup_failures or 0) >= BLUETOOTH_STARTUP_FAILURE_NOTICE,
@@ -385,6 +388,11 @@ class Runtime:
             return
         self.receive_count += 1
         self.diagnostics.observe(packet, received_ms, wire_length=len(frame), trailer=frame[-1])
+        if not getattr(self, 'maintenance', False):
+            try:
+                self.relay_identity.observe(packet.crypto_source, packet.sequence, frame[-1])
+            except Exception:
+                self.core.counts['relay_identity_failed'] += 1  # naming a relay must never disturb receiving
         while self.reply_seen and now - next(iter(self.reply_seen.values())) >= 5000:
             self.reply_seen.popitem(last=False)
         replay_key = frame[:-1]  # authenticate first; exclude mutable trailer
@@ -1451,6 +1459,7 @@ class Runtime:
         while True:
             try:
                 await self.transport.connect()
+                self.relay_identity.start(getattr(self.transport, 'address', None))
                 self.mesh_ready = True
                 self._bluetooth_startup_failures = None
                 self.last_error = None
@@ -1471,6 +1480,7 @@ class Runtime:
                     self._bluetooth_startup_failures = min(self._bluetooth_startup_failures + 1, BLUETOOTH_STARTUP_FAILURE_NOTICE)
             finally:
                 self.mesh_ready = False
+                self.relay_identity.stop()
                 await self.transport.disconnect()
                 for _, future, _ in self.waiters:
                     if not future.done():

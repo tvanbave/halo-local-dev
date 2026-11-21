@@ -4,6 +4,7 @@ import re
 import time
 from .bluez import BlueZTransport, SERVICE
 from .bridge import CONTROLLERS, LIGHTS
+from .relay_identity import OBSERVED_RELAYS
 
 
 def address_text(value):
@@ -19,7 +20,13 @@ PREFERRED_RELAY_MIN_RSSI = -85
 
 
 def relay_devices(store):
-    """Match a current device to a Bluetooth address only through a verified claim."""
+    """Match a current device to a Bluetooth address through a verified claim or an observed relay.
+
+    A verified claim is the strongest evidence: the device's own identity contains its address.
+    An identity observed while the device was the connected relay (relay_identity.py) only fills
+    addresses and devices that no claim covers. Any address or device left with more than one
+    match is ambiguous and gets no identity at all.
+    """
     owned = {d['device_id']: d for d in store.inventory()['devices'] if d['product_id'] in LIGHTS or d['product_id'] in CONTROLLERS}
     retired = set(store.get('retired_claims', []))
     addresses = {}
@@ -47,13 +54,27 @@ def relay_devices(store):
         target = journal['target']
         addresses.setdefault(address, set()).add(target)
         targets.setdefault(target, set()).add(address)
+    claimed_addresses, claimed_targets = set(addresses), set(targets)
+    observed = store.get(OBSERVED_RELAYS, {})
+    for address, entry in (observed.items() if isinstance(observed, dict) else ()):
+        try:
+            address = address_text(address)
+        except ValueError:
+            continue
+        target = entry.get('device_id') if isinstance(entry, dict) else None
+        if (type(target) is not int or target not in owned or entry.get('product_id') != owned[target]['product_id']
+                or address in claimed_addresses or target in claimed_targets):
+            continue
+        addresses.setdefault(address, set()).add(target)
+        targets.setdefault(target, set()).add(address)
     devices = {}
     for address, matches in addresses.items():
         if len(matches) == 1:
             target, = matches
             if len(targets[target]) == 1:
                 devices[address] = {'device_id': target, 'name': owned[target]['name'],
-                                    'kind': 'controller' if owned[target]['product_id'] in CONTROLLERS else 'light'}
+                                    'kind': 'controller' if owned[target]['product_id'] in CONTROLLERS else 'light',
+                                    'identity': 'pairing' if address in claimed_addresses else 'observed'}
     return devices
 
 

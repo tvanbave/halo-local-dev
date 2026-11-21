@@ -302,7 +302,8 @@ window.BridgeSettings = (() => {
   function showRelayRows(id, rows) {
     const list = field(id);
     const html = rows.map(row => '<li><strong>' + escape(row.name || 'Unidentified relay') +
-      '</strong> · ' + escape(row.address) + '<br>Direct signal: ' +
+      '</strong> · ' + escape(row.address) +
+      (row.identity === 'observed' ? '<br>Identified while connected as the relay' : '') + '<br>Direct signal: ' +
       (row.rssi == null ? 'No signal reading yet' : escape(row.rssi)+' dBm · '+escape(sampleTime(row.seen_at)) +
       (row.latest ? '' : ' · Not seen in latest scan')) + '<br>Mesh: ' + meshReport(row) + '</li>').join('');
     if (list._relayMarkup !== html) { list.innerHTML = html; list._relayMarkup = html; }
@@ -429,7 +430,7 @@ window.BridgeSettings = (() => {
     field('relayPanel').hidden = typeof feat !== 'function' || !feat('relay_settings');
     if (relayVisible() && typeof S !== 'undefined' && !relayBusy) {
       updateRelayReadings();
-      const stamp = [S.status?.relay_extended_scan?.phase,S.status?.instance,S.status?.inventory_revision,S.status?.mesh_ready,S.status?.relay_scan_number].join('|');
+      const stamp = [S.status?.relay_extended_scan?.phase,S.status?.instance,S.status?.inventory_revision,S.status?.mesh_ready,S.status?.relay_scan_number,S.status?.relay_identity].join('|');
       if (stamp !== relayStamp) { relayStamp = stamp; relayRequest('status'); }
     }
     field('bridgeUpdatePanel').hidden = typeof feat !== 'function' || !feat('software_updates');
