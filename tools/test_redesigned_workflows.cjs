@@ -272,7 +272,7 @@ function fixture() {
     await p.reload();
     await p.getByText("1 light hasn't reported a state").waitFor();
     await p.locator('.attention').getByRole('button',{name:'View lights',exact:true}).click();
-    await p.getByText('No power reading',{exact:true}).waitFor();
+    await p.getByText('Not responding',{exact:true}).waitFor();
     assert.equal(await p.getByRole('button',{name:'Theatre 2',exact:true}).count(),0);
     await p.evaluate(()=>go('home'));
     s.snapshot.device_states={'40001':reported(0)};
@@ -1084,17 +1084,29 @@ function fixture() {
     assert.deepEqual(s.calls.filter(c=>c.path==='/api/control').map(c=>[c.body.target,c.body.values.state]),
       [[40001,'ON'],[40001,'OFF'],[300,'ON'],[300,'OFF'],[300,'ON'],[40001,'ON'],[40002,'ON'],[40001,'OFF'],[40002,'OFF']]);
   });
-  await scenario('power-totals-separate-current-and-awaiting-readings',async(p,s)=>{
+  await scenario('power-totals-count-known-lights-and-flag-only-silent-ones',async(p,s)=>{
     s.snapshot.inventory.groups[0].members=[40001,40002];
     s.snapshot.device_rooms={'40001':'Theatre','40002':'Theatre'};
     const show=()=>p.evaluate(snapshot=>{applySnapshot(snapshot);go('home');},clone(s.snapshot));
     await show();
     const counts=[p.locator('.view-head .sub'),p.locator('.room-head .count'),p.locator('.group-open .small')];
-    for(const count of counts) assert((await count.innerText()).includes('Waiting for light status · 2 awaiting readings'));
+    // Before any reading, the summary says the bridge is checking rather than listing every light.
+    for(const count of counts) assert((await count.innerText()).includes('Checking lights…'));
+    for(const count of counts) assert(!(await count.innerText()).includes('awaiting'));
+    // An older reading still counts, as it does on the light's tile.
     s.snapshot.device_states={'40001':reported(100),'40002':reported(0,3000,false)};await show();
-    for(const count of counts) assert((await count.innerText()).includes('1 on · 0 off · 1 awaiting readings'));
-    s.snapshot.device_states['40002']=reported(0);await show();
     for(const count of counts) assert((await count.innerText()).includes('1 on · 1 off'));
+    for(const count of counts) assert(!/awaiting|not responding/.test(await count.innerText()));
+    // Only a light that missed repeated checks is called out.
+    delete s.snapshot.device_states['40002'];s.snapshot.power_read_status={'40002':'no_reply'};await show();
+    for(const count of counts) assert((await count.innerText()).includes('1 on · 0 off · 1 not responding'));
+    // A light still being checked is not called out.
+    s.snapshot.power_read_status={'40002':'waiting'};await show();
+    for(const count of counts) assert.match(await count.innerText(),/1 on · 0 off(?! ·\s*\d+ not)/);
+    s.snapshot.device_states={'40001':reported(0,3000,false),'40002':reported(0,3000,false)};s.snapshot.power_read_status={};await show();
+    for(const count of counts) assert((await count.innerText()).includes('0 on · 2 off'));
+    delete s.snapshot.device_states;s.snapshot.power_read_status={'40001':'no_reply','40002':'no_reply'};await show();
+    for(const count of counts) assert((await count.innerText()).includes('2 not responding'));
   },true);
   await scenario('manual-state-sweep-yields-and-stops-after-current-read',async(p,s)=>{
     s.features.read_states=true;

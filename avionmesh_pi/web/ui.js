@@ -74,13 +74,20 @@ const missingPowerReply = d => !known(d) && !gettingStatus(d) &&
   (d.power_read_status === 'no_reply' || d.power_read_status === undefined);
 const isOn = d => known(d) && d.brightness > 0;
 const canDim = d => d.kind === 'light' && d.has_dimming !== false && d.product_type !== 167;
+/* Summaries count every light with a known state, including a last known reading, as the
+   tiles do; the paced status sweep refreshes them. Only lights that missed repeated checks
+   are called out. Control confirmation still requires fresh readings (power_fresh). */
 function powerCounts(devices) {
   if (!devices.length) return 'No lights';
-  const current = devices.filter(d => known(d) && d.power_fresh);
-  if (!current.length) return `Waiting for light status · ${devices.length} awaiting readings`;
-  const on = current.filter(isOn).length;
-  return [on + ' on', (current.length - on) + ' off',
-    current.length < devices.length ? (devices.length - current.length) + ' awaiting readings' : ''].filter(Boolean).join(' · ');
+  const reported = devices.filter(known);
+  const silent = devices.filter(d => !known(d) && d.power_read_status === 'no_reply').length;
+  const notResponding = silent ? silent + ' not responding' : '';
+  if (!reported.length) {
+    if (silent === devices.length) return notResponding;
+    return [S.status?.mesh_ready === false ? 'Light status unavailable' : 'Checking lights…', notResponding].filter(Boolean).join(' · ');
+  }
+  const on = reported.filter(isOn).length;
+  return [on + ' on', (reported.length - on) + ' off', notResponding].filter(Boolean).join(' · ');
 }
 const roomOf = d => d.room || '';
 const rooms = () => [...new Set(S.devices.map(roomOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -100,7 +107,7 @@ function ageText(id) {
 function stateText(d) {
   if (S.pending[d.avion_id]) return 'Sent · waiting for reply';
   if (!known(d) && d.power_read_status === 'retry_pending') return 'Waiting for next check…';
-  return !known(d) ? (gettingStatus(d) ? 'Getting status…' : d.power_read_status === 'no_reply' ? 'No power reading' : 'State unknown') : (d.power_last_known ? 'Last known: ' : '') + (isOn(d) ? (canDim(d) ? pct(d.brightness) + '%' : 'On') : 'Off') + ageText(d.avion_id);
+  return !known(d) ? (gettingStatus(d) ? 'Getting status…' : d.power_read_status === 'no_reply' ? 'Not responding' : 'State unknown') : (d.power_last_known ? 'Last known: ' : '') + (isOn(d) ? (canDim(d) ? pct(d.brightness) + '%' : 'On') : 'Off') + ageText(d.avion_id);
 }
 function kelvinColor(k) {
   const stops = [[2700,[255,174,82]],[3000,[255,198,128]],[3500,[255,221,176]],[4000,[255,240,220]],[5000,[238,242,255]]];
