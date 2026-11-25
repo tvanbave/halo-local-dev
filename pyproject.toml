@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "avionmesh-pi"
-version = "0.5.0.dev86"
+version = "0.5.0.dev87"
 description = "Development Avi-on mesh bridge service for Docker on Raspberry Pi"
 requires-python = ">=3.10"
 dependencies = ["cryptography>=44,<49", "bleak>=3.0.2,<4", "aiomqtt==2.5.1", "aiohttp>=3.12,<4"]

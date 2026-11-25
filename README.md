@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="Development build 0.5.0.dev86" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev86-orange">
+  <img alt="Development build 0.5.0.dev87" src="https://img.shields.io/badge/status-development%20build%200.5.0.dev87-orange">
   <img alt="Runs on Raspberry Pi" src="https://img.shields.io/badge/runs%20on-Raspberry%20Pi-c51a4a">
   <img alt="Local control, no cloud login for daily use" src="https://img.shields.io/badge/control-local%2C%20no%20cloud%20login-2c68a8">
   <img alt="Licence LGPL-3.0-only" src="https://img.shields.io/badge/licence-LGPL--3.0--only-blue">
@@ -33,7 +33,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Development build: 0.5.0.dev86.** This build is for experienced testers, not
+> **Development build: 0.5.0.dev87.** This build is for experienced testers, not
 > a one-click replacement for the app. Full hardware parity and unattended recovery
 > are still being tested; read [Hardware status](#hardware-status) before you rely on it.
 > HALO Local is not an official Cooper Lighting or Avi-on product, and it is not

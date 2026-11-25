@@ -2139,5 +2139,57 @@ function fixture() {
     await p.getByText(/No usable saved button mapping/).waitFor();
   },true);
   await scenario('mobile-groups',async(p)=>{await group(p);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await p.screenshot({path:path.join(evidence,'mobile-groups.png'),fullPage:true});},true);
+  // Drawer: direct signal at the Pi, mesh hops from the last message, and the relay used.
+  for (const mobile of [false,true]) await scenario('drawer-signal-hops-and-relay-'+(mobile?'mobile':'desktop'),async(p,s)=>{
+    const now=await p.evaluate(()=>Date.now()/1000);
+    s.handlers['/api/settings/relay']=({send})=>send({current:'02:00:00:00:00:01',configurable:true,
+      candidates:[{device_id:40001,name:'Theatre 1',address:'02:00:00:00:00:01',rssi:-61,seen_at:now-125,latest:true},
+                  {device_id:40002,name:'Theatre 2',address:'02:00:00:00:00:02',rssi:null,seen_at:null,latest:false}],
+      controllers:[{device_id:40003,name:'Wall keypad',address:'02:00:00:00:00:03',rssi:-74,seen_at:now-30,latest:false}]});
+    s.snapshot.mesh_reports={'40001':{hop_count:50,hops:0,age_ms:3000,via_current_relay:true},
+      '40002':{hop_count:48,hops:2,age_ms:5000,via_current_relay:false},'40003':{hop_count:19,hops:null,age_ms:1000,via_current_relay:true}};
+    await p.evaluate(x=>{applySnapshot(x);openDrawer('device',40001);},clone(s.snapshot));
+    const drawer=p.locator('.drawer');
+    await drawer.getByText('-61 dBm · 2 min ago',{exact:true}).waitFor();
+    await drawer.getByText(/^0 · its messages reach the Pi directly, as the connected relay · /).waitFor();
+    await drawer.getByText("This device is the Pi's current Bluetooth relay",{exact:true}).waitFor();
+    await p.evaluate(()=>openDrawer('device',40002));
+    await drawer.getByText(/^No direct reading\./).waitFor();
+    await drawer.getByText(/^2 · its last message was passed on by 2 lights, including the relay · .* · measured through an earlier relay$/).waitFor();
+    await drawer.getByText('Reached through Theatre 1',{exact:true}).waitFor();
+    await p.evaluate(()=>openDrawer('device',40003));
+    await drawer.getByText(/^-74 dBm · 30 s ago · not heard in the latest scan$/).waitFor();
+    await drawer.getByText(/^Not shown for this device type · /).waitFor();
+    await drawer.getByRole('button',{name:'Bluetooth relay settings',exact:true}).waitFor();
+    assert.equal(s.calls.filter(c=>c.path==='/api/settings/relay').length,1); // cached between drawers
+    assert(!s.calls.some(c=>c.body));
+    if(mobile)assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  },mobile);
+  // A group command shows members at the commanded level until each one reports.
+  await scenario('group-command-confirming-until-reports',async(p,s)=>{
+    const reading=(on,at)=>({state:{value:on?'ON':'OFF',fresh:true,observed_ms:at,age_ms:0},brightness:{value:on?255:0,fresh:true,observed_ms:at,age_ms:0}});
+    s.snapshot.inventory.groups[0].members=[40001,40002];
+    s.snapshot.device_states={'40001':reading(false,100),'40002':reading(false,100)};
+    s.snapshot.recent_commands={'300':{brightness:255,sent_ms:200,age_ms:100,source:'mqtt',members:[40001,40002]}};
+    const push=()=>p.evaluate(x=>{applySnapshot(x);render();},clone(s.snapshot));
+    await push();
+    assert.equal(await p.evaluate(()=>powerCounts(members(300))),'2 on · 0 off · confirming');
+    assert.equal(await p.evaluate(()=>[dev(40001).power_fresh,dev(40001).power_observed_ms,dev(40001).brightness]).then(String),'true,100,255');
+    await p.getByText('100% · confirming',{exact:true}).first().waitFor();
+    s.snapshot.device_states['40001']=reading(true,300);
+    await push();
+    assert.equal(await p.evaluate(()=>[!!dev(40001).confirming,!!dev(40002).confirming].join()),'false,true');
+    s.snapshot.device_states['40002']=reading(false,350); // reported, and did not switch
+    await push();
+    assert.equal(await p.evaluate(()=>powerCounts(members(300))),'1 on · 1 off');
+    await p.getByText('100% · confirming',{exact:true}).waitFor({state:'detached'});
+    // Without reports, the commanded level is shown only for the confirmation window.
+    s.snapshot.device_states={'40001':reading(false,400),'40002':reading(false,400)};
+    s.snapshot.recent_commands={'300':{brightness:255,sent_ms:500,age_ms:7700,source:'native',members:[40001,40002]}};
+    await push();
+    assert.equal(await p.evaluate(()=>powerCounts(members(300))),'2 on · 0 off · confirming');
+    await p.waitForFunction(()=>powerCounts(members(300))==='0 on · 2 off',null,{timeout:3000});
+    assert(!s.calls.some(c=>c.body));
+  });
   await browser.close();const output={results,errors};fs.writeFileSync(path.join(evidence,'browser.json'),JSON.stringify(output,null,2)+'\n');console.log(JSON.stringify(output,null,2));if(errors.length||results.some(r=>!r.passed))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});

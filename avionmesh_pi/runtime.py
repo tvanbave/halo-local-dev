@@ -9,6 +9,7 @@ from .bridge import Bridge, CONTROLLERS, LIGHTS, COLOR_LIGHTS, load_devices
 from .controllers import binding_status, named_inputs
 from .diagnostics import Diagnostics
 from .relay_identity import RelayIdentity
+from .mesh_reports import MeshReports
 from .timing import CommandTimings
 from .errors import OperationNotStarted
 from .scene_mqtt import publications as scene_publications
@@ -104,6 +105,7 @@ class Runtime:
         self.capabilities = {}
         self.diagnostics = Diagnostics(self.clock)
         self.relay_identity = RelayIdentity(store, lambda source: getattr(self.core.devices.get(source), 'product_id', None))
+        self.mesh_reports = MeshReports()
         self.command_timings = CommandTimings(self.clock, self.core.prefix)
         from .scene_engine import SceneEngine
         self.scene_engine = SceneEngine(self)
@@ -393,6 +395,11 @@ class Runtime:
                 self.relay_identity.observe(packet.crypto_source, packet.sequence, frame[-1])
             except Exception:
                 self.core.counts['relay_identity_failed'] += 1  # naming a relay must never disturb receiving
+            try:
+                self.mesh_reports.observe(packet.crypto_source, packet.sequence, frame[-1], received_ms,
+                                          getattr(self.transport, 'address', None))
+            except Exception:
+                self.core.counts['mesh_report_failed'] += 1  # display readings must never disturb receiving
         while self.reply_seen and now - next(iter(self.reply_seen.values())) >= 5000:
             self.reply_seen.popitem(last=False)
         replay_key = frame[:-1]  # authenticate first; exclude mutable trailer

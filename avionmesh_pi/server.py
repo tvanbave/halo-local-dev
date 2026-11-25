@@ -518,6 +518,12 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
         data['group_workflow'] = rooms.overview()
         if read_only:
             data['group_workflow'].update(programming_enabled=False, disabled_reason='Read-only preview')
+        # Display hints only: requested levels awaiting confirmation, and per-device hop counts.
+        data['recent_commands'] = runtime.command_timings.latest_levels()
+        transport = runtime.transport
+        data['mesh_reports'] = runtime.mesh_reports.view(
+            {d.device_id: d.product_id for d in runtime.core.devices.values()}, runtime.clock(),
+            getattr(transport, 'address', None) if getattr(transport, 'ready', False) else None)
         return data
 
     async def snapshot_view(request):
@@ -1100,6 +1106,9 @@ def create_app(runtime, token, *, read_only=False, trusted_lan_no_auth=False, al
             comparable['controllers'] = [
                 dict(row, last_event={k: v for k, v in row['last_event'].items() if k != 'age_ms'})
                 if row.get('last_event') else row for row in snapshot['controllers']]
+            for section in ('recent_commands', 'mesh_reports'):
+                comparable[section] = {key: {k: v for k, v in row.items() if k != 'age_ms'}
+                                       for key, row in snapshot[section].items()}
             timings = snapshot['status']['command_timings']
             comparable['status'] = dict(snapshot['status'], command_timings=dict(timings, recent=[
                 {k: v for k, v in row.items() if k != 'age_ms'} for row in timings['recent']]))

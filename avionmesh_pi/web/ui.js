@@ -87,7 +87,8 @@ function powerCounts(devices) {
     return [S.status?.mesh_ready === false ? 'Light status unavailable' : 'Checking lights…', notResponding].filter(Boolean).join(' · ');
   }
   const on = reported.filter(isOn).length;
-  return [on + ' on', (reported.length - on) + ' off', notResponding].filter(Boolean).join(' · ');
+  return [on + ' on', (reported.length - on) + ' off', notResponding,
+    devices.some(d => d.confirming) ? 'confirming' : ''].filter(Boolean).join(' · ');
 }
 const roomOf = d => d.room || '';
 const rooms = () => [...new Set(S.devices.map(roomOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -104,8 +105,98 @@ function ageText(id) {
   if (m < 2) return '';
   return m < 60 ? ` · ${m} min ago` : m < 2880 ? ` · ${Math.floor(m / 60)} h ago` : ` · ${Math.floor(m / 1440)} days ago`;
 }
+/* ---------- Commanded levels awaiting confirmation ----------
+   One group command switches every member at once, but members report back one by one over
+   a few seconds. For a short window after the bridge sends (or hears) a command, a member that
+   has not reported since is shown at the commanded level, marked "confirming". Its real
+   reading replaces that as soon as it arrives, and the window ends after 8 seconds. Only the
+   display changes: brightness_fresh, power_fresh and power_observed_ms stay the real readings,
+   so control confirmation still needs actual reports. */
+const CONFIRM_WINDOW_MS = 8000;
+const commandSeenAt = new Map();
+let activeCommands = [], confirmTimer = null;
+function trackCommands(recent) {
+  const now = Date.now(), list = [];
+  for (const [target, c] of Object.entries(recent || {})) {
+    if (!Number.isInteger(c?.brightness) || !Number.isFinite(c?.sent_ms)) continue;
+    const key = target + ':' + c.sent_ms;
+    if (!commandSeenAt.has(key)) commandSeenAt.set(key, now - Math.max(0, c.age_ms || 0));
+    const until = commandSeenAt.get(key) + CONFIRM_WINDOW_MS;
+    if (until > now) list.push({...c, target:+target, until});
+  }
+  for (const [key, at] of commandSeenAt) if (now - at > 60000) commandSeenAt.delete(key);
+  activeCommands = list.sort((a, b) => a.sent_ms - b.sent_ms);
+}
+function applyConfirming() {
+  const now = Date.now();
+  for (const d of S.devices) {
+    if (!('reported_brightness' in d)) continue;
+    if (d.reported_brightness === undefined) delete d.brightness; else d.brightness = d.reported_brightness;
+    delete d.confirming;
+    if (d.kind !== 'light') continue;
+    let shown = null;
+    for (const c of activeCommands) {
+      const covers = c.target === d.avion_id || (Array.isArray(c.members) ? c.members.includes(d.avion_id)
+        : (grp(c.target)?.members || []).includes(d.avion_id));
+      if (covers && c.until > now && !(Number.isFinite(d.power_observed_ms) && d.power_observed_ms >= c.sent_ms)) shown = c;
+    }
+    if (shown) { d.brightness = shown.brightness; d.confirming = {source: shown.source}; }
+  }
+  clearTimeout(confirmTimer);
+  const next = Math.min(...activeCommands.map(c => c.until).filter(t => t > now));
+  if (Number.isFinite(next)) confirmTimer = setTimeout(() => { applyConfirming(); renderSoon(); }, next - now + 50);
+}
+
+/* ---------- Bluetooth signal, mesh hops and relay (device drawer) ---------- */
+let relayInfoLoading = false;
+function loadRelayInfo(force) {
+  if (relayInfoLoading || (!force && S.relayInfoAt && Date.now() - S.relayInfoAt < 20000)) return;
+  relayInfoLoading = true;
+  api('/api/settings/relay').then(v => { S.relayInfo = v; }, () => {})
+    .finally(() => { relayInfoLoading = false; S.relayInfoAt = Date.now(); renderSoon(); });
+}
+function agoLabel(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s < 5 ? 'just now' : s + ' s ago';
+  const m = Math.floor(s / 60); if (m < 60) return m + ' min ago';
+  const h = Math.floor(m / 60); return h < 48 ? h + ' h ago' : Math.floor(h / 24) + ' days ago';
+}
+const relayRows = () => S.relayInfo ? [...(S.relayInfo.candidates || []), ...(S.relayInfo.controllers || [])] : [];
+function signalText(d) {
+  if (!S.relayInfo) return S.relayInfoAt ? 'Not available' : 'Loading…';
+  const row = relayRows().find(r => r.device_id === d.avion_id);
+  if (!row || row.rssi == null) return 'No direct reading. The Pi has not heard this device itself; it can still be reached through other lights.';
+  return row.rssi + ' dBm · ' + agoLabel(Date.now() - row.seen_at * 1000) + (row.latest ? '' : ' · not heard in the latest scan');
+}
+function meshHopsText(d) {
+  const m = S.meshReports?.[String(d.avion_id)];
+  if (!m) return 'No message heard from this device yet';
+  const when = agoLabel((m.age_ms || 0) + (snapshotAt ? Date.now() - snapshotAt : 0));
+  const via = m.via_current_relay ? '' : ' · measured through an earlier relay';
+  if (m.hops == null) return 'Not shown for this device type · ' + when;
+  if (m.hops === 0) return '0 · its messages reach the Pi directly, as the connected relay · ' + when + via;
+  return m.hops + ' · its last message was passed on by ' + m.hops + ' light' + (m.hops === 1 ? '' : 's') +
+    ', including the relay · ' + when + via;
+}
+function relayText(d) {
+  if (!S.relayInfo) return S.relayInfoAt ? 'Not available' : 'Loading…';
+  const current = S.relayInfo.current;
+  if (!current) return 'Bluetooth relay disconnected';
+  if (relayRows().some(r => r.device_id === d.avion_id && r.address === current)) return 'This device is the Pi\'s current Bluetooth relay';
+  const row = relayRows().find(r => r.address === current);
+  return 'Reached through ' + (row?.name || current);
+}
+function meshSectionHtml(d) {
+  loadRelayInfo();
+  return `<div class="sec"><h4>Advanced: Bluetooth and mesh</h4><dl class="kv">
+    <dt>Mesh hops</dt><dd>${esc(meshHopsText(d))}</dd>
+    <dt>Bluetooth relay</dt><dd>${esc(relayText(d))}</dd></dl>
+    <p class="hint">Hops are counted from the last message heard from this device. Lights send at a hop count of 50 and each light that passes a message on lowers it by one. The count isn't protected by the message's authentication, so treat it as a guide.</p>
+    <div class="row"><button class="btn sm" onclick="go('settings')">Bluetooth relay settings</button></div></div>`;
+}
 function stateText(d) {
   if (S.pending[d.avion_id]) return 'Sent · waiting for reply';
+  if (d.confirming) return (isOn(d) ? (canDim(d) ? pct(d.brightness) + '%' : 'On') : 'Off') + ' · confirming';
   if (!known(d) && d.power_read_status === 'retry_pending') return 'Waiting for next check…';
   return !known(d) ? (gettingStatus(d) ? 'Getting status…' : d.power_read_status === 'no_reply' ? 'Not responding' : 'State unknown') : (d.power_last_known ? 'Last known: ' : '') + (isOn(d) ? (canDim(d) ? pct(d.brightness) + '%' : 'On') : 'Off') + ageText(d.avion_id);
 }
@@ -743,7 +834,8 @@ function lightDrawer(d) {
     <div class="sec"><h4>Groups</h4>${(d.groups || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${d.groups.map(g => `<button class="chip" onclick="openDrawer('group',${g})">${esc(gName(g))}</button>`).join('')}</div>` : '<p class="hint" style="margin:0">Not in any group.</p>'}
       ${feat('group_edit') ? '' : '<p class="hint">Changing group membership isn\'t available on this bridge yet.</p>'}</div>
     <div class="sec"><h4>Details</h4><dl class="kv"><dt>Mesh ID</dt><dd class="mono">#${d.avion_id}</dd><dt>Type</dt><dd>${esc(typeName(d))} <span class="muted mono">(${d.product_type})</span></dd>
-      <dt>Type source</dt><dd>${typeSourceText(d)}</dd></dl></div>
+      <dt>Type source</dt><dd>${typeSourceText(d)}</dd><dt>Signal at Pi</dt><dd>${esc(signalText(d))}</dd></dl></div>
+    ${meshSectionHtml(d)}
     ${deviceToolsHtml(d)}
   </div>`;
 }
@@ -1493,7 +1585,8 @@ function ctrlDrawer(d) {
     <div class="sec"><h4>What it controls</h4><div class="callout info">${I.info}<div>${controllerDetails(d)}</div></div></div>
     <div class="sec"><h4>Name and room</h4>${nameField(d)}${roomField(d)}</div>
     ${haSharingHtml('device', d)}
-    <div class="sec"><h4>Details</h4><dl class="kv"><dt>Mesh ID</dt><dd class="mono">#${d.avion_id}</dd><dt>Type</dt><dd>${esc(typeName(d))} <span class="muted mono">(${d.product_type})</span></dd><dt>Type source</dt><dd>${typeSourceText(d)}</dd></dl></div>
+    <div class="sec"><h4>Details</h4><dl class="kv"><dt>Mesh ID</dt><dd class="mono">#${d.avion_id}</dd><dt>Type</dt><dd>${esc(typeName(d))} <span class="muted mono">(${d.product_type})</span></dd><dt>Type source</dt><dd>${typeSourceText(d)}</dd><dt>Signal at Pi</dt><dd>${esc(signalText(d))}</dd></dl></div>
+    ${meshSectionHtml(d)}
     ${deviceToolsHtml(d)}
   </div>`;
 }
@@ -2744,6 +2837,7 @@ function applySnapshot(d) {
     out.brightness_fresh = s.state?.value === 'OFF' ? s.state.fresh === true : s.brightness?.fresh === true;
     out.power_fresh = s.state?.fresh === true || out.brightness_fresh;
     out.power_observed_ms = s.state?.observed_ms ?? s.brightness?.observed_ms;
+    out.reported_brightness = out.brightness;
     if (s.color_temp) out.color_temp = s.color_temp.value;
     out.color_temp_fresh = s.color_temp?.fresh === true;
     const ages = ['state', 'brightness', 'color_temp'].filter(k => s[k]).map(k => s[k].age_ms);
@@ -2755,6 +2849,9 @@ function applySnapshot(d) {
     return out;
   });
   S.groups = (inv.groups || []).map(g => ({group_id:g.group_id, name:g.name, members:(g.members || []).slice(), exposed:g.exposed === true, protected:!!g.protected}));
+  S.meshReports = d.mesh_reports || {};
+  trackCommands(d.recent_commands);
+  applyConfirming();
   settleAccessoryRequests();
   updateDimmerControlReview();
   settleBatterySetups();

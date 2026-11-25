@@ -118,6 +118,30 @@ class CommandTimings:
             if all_reported and r['all_published'] is None:
                 r['all_published'] = ended_ms
 
+    def latest_levels(self, window_ms=15000):
+        """The newest dispatched brightness per target, for a brief display hint.
+
+        A requested level is never an observation: the page may show it only until each
+        member reports, and only within this window. Commands that never started or whose
+        send failed are excluded, as is everything before a session boundary.
+        """
+        self._expire()
+        now, latest = self.clock(), {}
+        for r in self.records.values():
+            level = r['expected'].get('brightness')
+            if (type(level) is not int or r['dispatch'] is None
+                    or r['closed'] not in (None, 'superseded')):
+                continue
+            at = r['sent'] if r['sent'] is not None else r['dispatch']
+            age = now - at
+            if not 0 <= age <= window_ms:
+                continue
+            prior = latest.get(r['target'])
+            if prior is None or at >= prior['sent_ms']:
+                latest[r['target']] = {'brightness': level, 'sent_ms': at, 'age_ms': age,
+                                       'source': r['source'], 'members': sorted(r['members'])}
+        return {str(target): value for target, value in latest.items()}
+
     def summary(self):
         self._expire()
         recent = []
